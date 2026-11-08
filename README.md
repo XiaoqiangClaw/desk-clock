@@ -66,7 +66,14 @@ bash scripts/build.sh     # 出安装包（产物在 src-tauri/target/release/bu
 - [x] 架构 / 设计契约
 - [x] Tauri v2 壳（透明无边框窗口、偏好原子持久化、位置恢复与越界兜底、自启、置顶权限）
 - [x] 静态前端（8 样式、翻页 3D 动画、单次 setTimeout 引擎、设置面板）
-- [x] 无头 Chromium 视觉验收
-- [ ] 本机无 Rust 工具链，`cargo tauri build` 的**编译**需在目标系统执行（已按官方 v2 API 写好，见 `docs/SPEC.md` 验收条目）
+- [x] 无头 Chromium 功能 + 视觉验收（31/31 PASS）
+- [x] **Linux 原生安装包已在 InstaBox 主机真编译并回拉**（`dist/` 下 deb + rpm，零 warning，SHA256 校验一致）
+- [ ] Windows / macOS 安装包需在对应系统上跑 `scripts/build.sh`（Tauri 不支持跨平台交叉编译）
+
+### 现成安装包
+```
+dist/Desk-Clock_0.1.0_amd64.deb          Debian/Ubuntu/Mint：sudo apt install ./dist/*.deb
+dist/Desk-Clock-0.1.0-1.x86_64.rpm       Fedora/RHEL/openSUSE：sudo dnf install ./dist/*.rpm
+```
 
 > 本项目为本地私有仓库，未设置任何 git remote，不会推送到外部。

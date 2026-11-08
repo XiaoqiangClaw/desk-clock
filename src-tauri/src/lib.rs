@@ -110,7 +110,6 @@ fn set_prefs(
 fn set_window_position(win: WebviewWindow, x: f64, y: f64) -> Result<(f64, f64), String> {
     win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)))
         .map_err(|e| e.to_string())?;
-    let scale = win.scale_factor().map_err(|e| e.to_string())?;
     let pos = win.outer_position().map_err(|e| e.to_string())?;
     Ok((pos.x as f64, pos.y as f64))
 }
@@ -166,7 +165,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             // macOS uses a LaunchAgent; Windows/Linux register natively.
-            app.handle().plugin(tauri_plugin_autostart::init(
+            let _ = app.handle().plugin(tauri_plugin_autostart::init(
                 MacosLauncher::LaunchAgent,
                 Some(vec!["--startup"]),
             ));
