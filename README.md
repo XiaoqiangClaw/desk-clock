@@ -40,8 +40,8 @@ bash scripts/preview.sh          # 生成 .preview/*.png 八张样式截图
 
 ### 直接下载安装包
 
-在 [Releases](https://github.com/xiaoqiangclub/desk-clock/releases) 下载对应平台的安装包；
-每次 push 到 `main` 或手动触发 workflow 后，[Actions](https://github.com/xiaoqiangclub/desk-clock/actions) 会产出可下载的构建产物。
+- 每次 push 到 `main` 或手动触发 workflow 后，[Actions](https://github.com/xiaoqiangclub/desk-clock/actions) 的 **Artifacts** 会产出全平台安装包（Linux deb/rpm/AppImage、Windows msi/exe、macOS dmg/app，含 x64 与 arm64）。
+- 推送 `v*` 标签（如 `git tag v0.1.0 && git push origin v0.1.0`）会自动创建 [Releases](https://github.com/xiaoqiangclub/desk-clock/releases) 并把安装包挂上去。
 
 浏览器模式下设置存 `localStorage`，可即时切换样式/秒/12 小时制/背板/缩放/不透明度。
 
