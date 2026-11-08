@@ -1,0 +1,18 @@
+# Build artifacts
+src-tauri/target/
+src-tauri/gen/
+node_modules/
+dist/
+
+# Local runtime state
+.preview/*
+!.preview/.gitkeep
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Never commit secrets / local prefs
+prefs.json
+*.tmp
