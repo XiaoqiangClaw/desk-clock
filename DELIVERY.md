@@ -1,7 +1,7 @@
 # 交付说明（给主人）· 2026-11-08
 
 ## 成品
-本地私有桌面时钟 **Desk Clock**，一套代码跨 Windows / macOS / Linux。
+开源（MIT）桌面时钟 **Desk Clock**，一套代码跨 Windows / macOS / Linux；源码托管于 GitHub 公共仓库，由 GitHub Actions 免费自动打包。
 
 ## 你要的，逐条对照
 | 你的要求 | 落实情况 |
@@ -28,8 +28,8 @@
 - 翻页动画：秒针位每秒真实 3D 翻转（截图 flip.png 为静止帧）
 - 低资源设计已落地（单次定时器/隐藏暂停/逐位动画/系统 WebView）
 
-## 明早拿到的东西
-1. **完整源码**：`projects/desk-clock/`（git 本地仓库，无 remote，纯私有）
+## 交付内容
+1. **完整源码**：`projects/desk-clock/`（已开源至 `github.com/xiaoqiangclub/desk-clock`，MIT）
 2. **一键脚本**：`scripts/dev.sh`（开发）、`scripts/build.sh`（出安装包）、`scripts/verify.py`（回归验收）
 3. **立即可看的成品**：直接用浏览器打开 `ui/index.html` 就是全功能时钟（浏览器模式设置存 localStorage）
 4. 各平台安装包：在装有 Rust 的目标机上 `bash scripts/build.sh`，产物在 `src-tauri/target/release/bundle/`

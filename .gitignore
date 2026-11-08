@@ -4,8 +4,7 @@ src-tauri/gen/
 node_modules/
 
 # Local runtime state
-.preview/*
-!.preview/.gitkeep
+# .preview/*.png 为仓库自带的 8 张样式预览图，纳入版本控制供 README 引用
 *.log
 
 # OS junk
@@ -15,3 +14,7 @@ Thumbs.db
 # Never commit secrets / local prefs
 prefs.json
 *.tmp
+
+# Python cache
+__pycache__/
+*.py[cod]

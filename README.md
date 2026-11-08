@@ -1,8 +1,10 @@
 # Desk Clock
 
-一个**私有**的桌面时钟：只显示时间，可选是否显示秒，多种社区流行样式（含参考图那种
+一个**开源免费**的桌面时钟：只显示时间，可选是否显示秒，多种社区流行样式（含参考图那种
 去黑底的翻页卡片），低资源占用、稳定、无边框、支持开机自启、记住窗口位置，
 一套代码跨 **Windows / macOS / Linux**。
+
+> 本项目采用 [MIT License](LICENSE)，由 GitHub Actions 在**公共仓库**自动打包全平台安装包（公库 Actions 免费无限）。
 
 ## 为什么是这个架构
 
@@ -35,6 +37,11 @@ scripts/preview.sh  无头 Chromium 截图验收 8 种样式
 bash scripts/preview.sh          # 生成 .preview/*.png 八张样式截图
 # 或直接浏览器打开 ui/index.html
 ```
+
+### 直接下载安装包
+
+在 [Releases](https://github.com/xiaoqiangclub/desk-clock/releases) 下载对应平台的安装包；
+每次 push 到 `main` 或手动触发 workflow 后，[Actions](https://github.com/xiaoqiangclub/desk-clock/actions) 会产出可下载的构建产物。
 
 浏览器模式下设置存 `localStorage`，可即时切换样式/秒/12 小时制/背板/缩放/不透明度。
 
@@ -76,4 +83,8 @@ dist/Desk-Clock_0.1.0_amd64.deb          Debian/Ubuntu/Mint：sudo apt install .
 dist/Desk-Clock-0.1.0-1.x86_64.rpm       Fedora/RHEL/openSUSE：sudo dnf install ./dist/*.rpm
 ```
 
-> 本项目为本地私有仓库，未设置任何 git remote，不会推送到外部。
+## 开源
+
+- 协议：[MIT](LICENSE)
+- 自动打包：`.github/workflows/build.yml`（Linux / Windows / macOS 四目标矩阵，产物上传为 workflow artifacts）
+- 欢迎 PR；提交前请先跑 `python3 scripts/verify.py` 与 `bash scripts/build.sh`（需本地 Rust 环境）。

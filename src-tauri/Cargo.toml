@@ -1,7 +1,7 @@
 [package]
 name = "desk-clock"
 version = "0.1.0"
-description = "A private, low-footprint desktop clock"
+description = "An open-source, low-footprint desktop clock"
 edition = "2021"
 rust-version = "1.77.2"
 
