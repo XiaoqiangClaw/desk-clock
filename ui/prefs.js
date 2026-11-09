@@ -11,10 +11,19 @@
     backdrop: 'none',
     scale: 1,
     opacity: 1,
+    lang: 'zh-CN',
+    font: '',                 // '' = the style's own recommended font
+    customFont: '',
+    color: '',                // '' = the style's own recommended colour
+    customColor: '#f6f7f9',
+    alarms: [],               // [{time:"HH:MM", repeat:bool, id:string}]
     x: null,
     y: null
   };
 
+  var HEX = /^#[0-9a-fA-F]{6}$/;
+  var FONTS = ['', 'sans', 'serif', 'mono', 'rounded', '__custom__'];
+  var COLORS = ['', '__custom__'];
   var STORAGE_KEY = 'deskclock.prefs';
   var isNative = !!window.__TAURI__;
   var SAVE_DEBOUNCE = 200;
@@ -37,87 +46,102 @@
     if (!obj || typeof obj !== 'object') return out;
     if (typeof obj.style === 'string' && obj.style) out.style = obj.style;
     if (typeof obj.backdrop === 'string' && obj.backdrop) out.backdrop = obj.backdrop;
+    if (obj.lang === 'en' || obj.lang === 'zh-CN') out.lang = obj.lang;
     ['showSeconds', 'hour12', 'alwaysOnTop', 'autostart'].forEach(function (k) {
       if (obj[k] !== undefined) out[k] = !!obj[k];
     });
     if (isFinite(obj.scale)) out.scale = Math.min(2.5, Math.max(0.5, Number(obj.scale)));
     if (isFinite(obj.opacity)) out.opacity = Math.min(1, Math.max(0.3, Number(obj.opacity)));
-    if (isFinite(obj.x)) out.x = Number(obj.x);
-    if (isFinite(obj.y)) out.y = Number(obj.y);
+    // NOTE: global isFinite(null) === true. Guard with an explicit typeof check
+    // or a fresh install would be persisted as x:0,y:0 and the window would
+    // jump to the top-left corner instead of staying centered.
+    if (typeof obj.x === 'number' && isFinite(obj.x)) out.x = obj.x;
+    if (typeof obj.y === 'number' && isFinite(obj.y)) out.y = obj.y;
+    if (FONTS.indexOf(obj.font) >= 0) out.font = obj.font;
+    if (typeof obj.customFont === 'string' && obj.customFont.length <= 120) {
+      out.customFont = obj.customFont;
+    }
+    if (typeof obj.color === 'string' && (COLORS.indexOf(obj.color) >= 0 || HEX.test(obj.color))) {
+      out.color = obj.color;
+    }
+    if (typeof obj.customColor === 'string' && HEX.test(obj.customColor)) {
+      out.customColor = obj.customColor;
+    }
+    if (Array.isArray(obj.alarms)) {
+      out.alarms = obj.alarms.filter(function (a) {
+        return a && typeof a.time === 'string' && /^\d{2}:\d{2}$/.test(a.time);
+      }).slice(0, 20).map(function (a) {
+        return {
+          id: String(a.id || ('a' + Math.random().toString(36).slice(2, 9))),
+          time: a.time,
+          repeat: !!a.repeat
+        };
+      });
+    }
     return out;
   }
 
-  function localRead() {
-    try {
-      var raw = window.localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  }
-
-  function localWrite(prefs) {
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs)); }
-    catch (e) { /* private mode / quota */ }
-  }
-
-  function invoke(command, args) {
+  function invoke(cmd, args) {
     var core = window.__TAURI__ && window.__TAURI__.core;
-    if (!core || typeof core.invoke !== 'function') {
-      return Promise.reject(new Error('Tauri core unavailable'));
-    }
-    return core.invoke(command, args);
+    if (!core || typeof core.invoke !== 'function') return Promise.reject(new Error('no tauri'));
+    return core.invoke(cmd, args === undefined ? {} : args);
+  }
+
+  function readLocal() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
+    catch (e) { return {}; }
+  }
+
+  function writeLocal(obj) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); }
+    catch (e) { /* private mode / quota: keep working in memory */ }
   }
 
   function load() {
     if (!isNative) {
-      current = normalize(localRead());
+      current = normalize(readLocal());
       return Promise.resolve(clone(current));
     }
-    return invoke('get_prefs', undefined)
-      .then(function (res) {
-        var data = (res && typeof res === 'string') ? JSON.parse(res) : res;
-        current = normalize(data);
-        return clone(current);
-      })
-      .catch(function () {
-        current = normalize(localRead());
-        return clone(current);
-      });
+    return invoke('get_prefs')
+      .then(function (p) { current = normalize(p); return clone(current); })
+      .catch(function () { current = normalize(readLocal()); return clone(current); });
   }
 
   function get() { return clone(current); }
 
-  function flush() {
-    var snapshot = clone(current);
-    var done = function () {
-      var i;
-      for (i = 0; i < saveWaiters.length; i++) saveWaiters[i]();
-      saveWaiters = [];
-    };
-    localWrite(snapshot);
-    if (!isNative) { done(); return Promise.resolve(); }
-    // Key MUST be `prefs`: Tauri command args are matched by name.
-    return invoke('set_prefs', { prefs: snapshot })
-      .then(done, function () { done(); });  // local cache already written
-  }
-
-  function save(patch) {
-    if (patch && typeof patch === 'object') {
-      var k;
-      for (k in patch) {
-        if (Object.prototype.hasOwnProperty.call(patch, k)) current[k] = patch[k];
-      }
-      current = normalize(current);
+  function merge(patch) {
+    var k;
+    for (k in patch) {
+      if (Object.prototype.hasOwnProperty.call(patch, k)) current[k] = patch[k];
     }
-    localWrite(current);  // instant local durability, even if debounce is pending
-    if (saveTimer !== null) clearTimeout(saveTimer);
-    saveTimer = setTimeout(function () { saveTimer = null; flush(); }, SAVE_DEBOUNCE);
-    return new Promise(function (resolve) { saveWaiters.push(resolve); });
+    current = normalize(current);
   }
 
-  // Window operations live in Rust (single coordinate system / correct DPI).
+  // Debounced full-object write. Rust expects `prefs` as the full merged object.
+  function save(patch) {
+    merge(patch);
+    var snapshot = clone(current);
+    writeLocal(snapshot);
+    if (!isNative) return Promise.resolve(clone(snapshot));
+    return new Promise(function (resolve) {
+      saveWaiters.push(resolve);
+      if (saveTimer !== null) clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () {
+        saveTimer = null;
+        var waiters = saveWaiters.slice();
+        saveWaiters = [];
+        invoke('set_prefs', { prefs: snapshot })
+          .then(function () { waiters.forEach(function (fn) { fn(clone(snapshot)); }); })
+          .catch(function () { waiters.forEach(function (fn) { fn(clone(snapshot)); }); });
+      }, SAVE_DEBOUNCE);
+    });
+  }
+
   function setWindowPosition(x, y) {
     if (!isNative) return Promise.resolve(null);
-    return invoke('set_window_position', { x: x, y: y }).catch(function () { return null; });
+    return invoke('set_window_position', { x: x, y: y })
+      .then(function (pos) { return pos || null; })
+      .catch(function () { return null; });
   }
 
   function getAutostart() {
@@ -140,6 +164,7 @@
     load: load,
     get: get,
     save: save,
+    resetDefaults: function () { return save(clone(DEFAULTS)); },
     setWindowPosition: setWindowPosition,
     getAutostart: getAutostart,
     setAutostart: setAutostart
