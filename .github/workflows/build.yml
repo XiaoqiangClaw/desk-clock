@@ -85,63 +85,11 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
-      # v0.4: Tauri 打 MSI/NSIS 时会从 GitHub Release 下载 WiX / NSIS 工具包，
-      # runner 上偶发 504 会让整个 Windows job 在编译成功后仍判失败。
-      # 这里用普通 GET（实测稳定）预下载并展开到 Tauri 期望的缓存目录，
-      # 必需文件齐全时 bundler 直接复用、不再联网。带重试 + 哈希校验。
-      - name: Preinstall WiX/NSIS tooling (avoid transient 504)
+      # 预置 WiX/NSIS 工具，避开 GitHub Release 临时 504（详见脚本头注释）。
+      - name: Preinstall WiX/NSIS tooling
         if: matrix.platform == 'windows-latest'
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $root = Join-Path $env:LOCALAPPDATA 'tauri'
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
-          function Get-File($url, $out, $minBytes) {
-            for ($i = 1; $i -le 5; $i++) {
-              try {
-                Write-Host "GET $url (attempt $i)"
-                Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 300 `
-                  -Headers @{ 'User-Agent' = 'DeskClock-CI' }
-                if ((Get-Item $out).Length -ge $minBytes) { return $true }
-              } catch { Write-Host "  failed: $_" }
-              Start-Sleep -Seconds (4 * $i)
-            }
-            return $false
-          }
-          # --- WiX 3.14 (MSI) ---
-          $wixDir = Join-Path $root 'WixTools314'
-          $wixReq = @('candle.exe','candle.exe.config','darice.cub','light.exe','light.exe.config','wconsole.dll','winterop.dll','wix.dll','WixUIExtension.dll','WixUtilExtension.dll')
-          $wixOk = Test-Path $wixDir
-          if ($wixOk) { foreach ($f in $wixReq) { if (-not (Test-Path (Join-Path $wixDir $f))) { $wixOk = $false; break } } }
-          if (-not $wixOk) {
-            $zip = Join-Path $env:TEMP 'wix314.zip'
-            if (-not (Get-File 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' $zip 1000000)) { throw 'WiX download failed' }
-            Remove-Item -Recurse -Force $wixDir -ErrorAction SilentlyContinue
-            New-Item -ItemType Directory -Force -Path $wixDir | Out-Null
-            Expand-Archive -Path $zip -DestinationPath $wixDir -Force
-            foreach ($f in $wixReq) { if (-not (Test-Path (Join-Path $wixDir $f))) { throw "WiX missing: $f" } }
-          }
-          Write-Host 'WiX ready'
-          # --- NSIS 3.13 (setup.exe) ---
-          $nsisDir = Join-Path $root 'NSIS'
-          $nsisReq = @('makensis.exe','Bin/makensis.exe','Stubs/lzma-x86-unicode','Stubs/lzma_solid-x86-unicode','Plugins/x86-unicode/additional/nsis_tauri_utils.dll','Include/MUI2.nsh','Include/FileFunc.nsh','Include/x64.nsh','Include/nsDialogs.nsh','Include/WinMessages.nsh','Include/Win/COM.nsh','Include/Win/Propkey.nsh','Include/Win/RestartManager.nsh')
-          $nsisOk = Test-Path $nsisDir
-          if ($nsisOk) { foreach ($f in $nsisReq) { if (-not (Test-Path (Join-Path $nsisDir $f))) { $nsisOk = $false; break } } }
-          if (-not $nsisOk) {
-            $nz = Join-Path $env:TEMP 'nsis-3.13.zip'
-            if (-not (Get-File 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip' $nz 1000000)) { throw 'NSIS download failed' }
-            Remove-Item -Recurse -Force (Join-Path $root 'nsis-3.13') -ErrorAction SilentlyContinue
-            Remove-Item -Recurse -Force $nsisDir -ErrorAction SilentlyContinue
-            Expand-Archive -Path $nz -DestinationPath $root -Force
-            if (Test-Path (Join-Path $root 'nsis-3.13')) { Rename-Item -Path (Join-Path $root 'nsis-3.13') -NewName 'NSIS' }
-            $plugin = Join-Path $nsisDir 'Plugins/x86-unicode/additional/nsis_tauri_utils.dll'
-            if (-not (Test-Path $plugin)) {
-              New-Item -ItemType Directory -Force -Path (Split-Path $plugin) | Out-Null
-              if (-not (Get-File 'https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll' $plugin 30000)) { throw 'nsis_tauri_utils.dll download failed' }
-            }
-            foreach ($f in $nsisReq) { if (-not (Test-Path (Join-Path $nsisDir $f))) { throw "NSIS missing: $f" } }
-          }
-          Write-Host 'NSIS ready'
+        run: ./scripts/prepare-windows-tools.ps1
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'

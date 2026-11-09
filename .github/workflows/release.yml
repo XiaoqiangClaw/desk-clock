@@ -42,6 +42,12 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      # 与 build.yml 共用同一脚本：预置 WiX/NSIS，避开 GitHub Release 临时 504。
+      - name: Preinstall WiX/NSIS tooling
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/prepare-windows-tools.ps1
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
