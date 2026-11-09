@@ -14,11 +14,14 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
-[target.'cfg(target_os = "windows")'.dependencies]
-is_elevated = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-autostart = "2"
+
+# Windows-only: detect an elevated (administrator) process for the
+# privilege prompt / auto-elevation feature.
+[target.'cfg(target_os = "windows")'.dependencies]
+is_elevated = "0.1"
 
 [features]
 # by default Tauri runs in production mode with the custom protocol
