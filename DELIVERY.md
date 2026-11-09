@@ -63,5 +63,7 @@
 ## 验证状态
 
 - 前端真实 Chromium：**31 + 43 + 34 + 55 = 163 项全绿**（`verify.py` / `verify_features.py` / `verify_v03.py` / `verify_v04.py`）。
-- Rust 编译：以 GitHub Actions 全平台 CI 为准（本机无 cargo）；所有新引入 API 均在 docs.rs / Tauri 源码逐条核验签名。
+- Rust 编译 + 全平台出包：**GitHub Actions Build run `42574157295` 5/5 job 全绿**；**Release run `42575459657` 4/4 job 全绿**，9 个安装包已发布到 [v0.4.0 Releases](https://github.com/xiaoqiangclub/desk-clock/releases/tag/v0.4.0)（含 Windows `.msi` + `.exe`、macOS 双架构 dmg、Linux deb/rpm/AppImage）。
+- 期间踩坑已闭环：Windows 打包阶段 WiX/NSIS 工具下载偶发 504（Rust 编译本身成功）→ 抽出 `scripts/prepare-windows-tools.ps1` 预置工具到 Tauri 缓存目录，build.yml / release.yml 共用，实测两个流程的 Windows job 均「WiX ready / NSIS ready」后正常出包。
+- 所有新引入 Tauri API 均在 docs.rs / tauri-bundler 源码逐条核验签名；capability 的 `clock-*` 通配符为官方支持的 glob。
 - 交付文件：`TESTING-v0.4.md`（安装验收清单）、`README.md`、`DELIVERY.md`、`.preview/settings-window-v04.png`。
