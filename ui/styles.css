@@ -175,7 +175,7 @@ html, body {
 #app:hover #gear, #gear:focus-visible { opacity: .9; }
 
 #resize-handle {
-  position: absolute; right: 2px; bottom: 2px; width: 18px; height: 18px; z-index: 45;
+  position: absolute; right: 2px; bottom: 2px; width: 18px; height: 18px; z-index: 35;
   cursor: nwse-resize; touch-action: none; opacity: 0; transition: opacity .2s ease;
   -webkit-app-region: no-drag;
   background:
@@ -205,7 +205,10 @@ html, body {
 }
 .settings-head .brand { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
 .brand-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--s-accent); box-shadow: 0 0 10px var(--s-accent); }
-#ver-badge { font-size: 10px; font-weight: 500; color: var(--s-dim); background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 20px; }
+#ver-badge { font-size: 10px; font-weight: 500; color: var(--s-dim); background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 20px; border: 0; cursor: pointer; transition: color .15s ease, background .15s ease; }
+#ver-badge:hover { color: var(--s-accent); background: var(--s-accent-soft); }
+.ver-badge { font-size: 10px; font-weight: 500; color: var(--s-dim); background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 20px; border: 0; cursor: pointer; transition: color .15s ease, background .15s ease; }
+.ver-badge:hover { color: var(--s-accent); background: var(--s-accent-soft); }
 .settings-head button { border: 0; background: transparent; color: inherit; font-size: 20px; line-height: 1; padding: 0 2px; }
 .tray-hint { margin: 10px 12px 0; padding: 8px 10px; border-radius: 8px; background: var(--s-accent-soft); border: 1px solid rgba(108,199,255,.28); color: #cdeeff; font-size: 11px; line-height: 1.5; }
 
@@ -241,6 +244,8 @@ body[data-view="settings"] .panel.active { display: block; animation: panel-in .
 
 .settings label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0; font-family: inherit; }
 .settings label > span:first-child { white-space: nowrap; }
+/* v0.5：管理器编辑器里的 <label> 不受全局 label 的 flex/margin 影响（避免边框间距异常） */
+.settings label.cm-field { display: block; margin: 6px 0; }
 .field-note { font-size: 10.5px; line-height: 1.5; color: var(--s-dim); margin: 4px 0 8px; }
 
 /* 美化后的下拉框 / 输入框 */
@@ -252,12 +257,15 @@ body[data-view="settings"] .panel.active { display: block; animation: panel-in .
   transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
 }
 .dc-select {
-  -webkit-appearance: none; appearance: none; padding-right: 26px;
+  -webkit-appearance: none; appearance: none; padding-right: 12px;
+  /* v0.5：隐藏原生下拉箭头——改由滚轮切换选项（见 bindWheelSelects）；
+     点击仍可展开原生下拉弹窗作为键盘/触控兜底。 */
   background-image:
     linear-gradient(45deg, transparent 50%, #aab3c0 50%),
     linear-gradient(135deg, #aab3c0 50%, transparent 50%);
-  background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
-  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+  background-position: calc(100% - 8px) 55%, calc(100% - 4px) 55%;
+  background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
+  background-clip: padding-box;
 }
 .dc-select:hover, .dc-input:hover { border-color: rgba(255,255,255,.3); background-color: #303540; }
 .dc-select:focus-visible, .dc-input:focus-visible { outline: none; border-color: var(--s-accent); box-shadow: 0 0 0 3px rgba(108,199,255,.18); }
@@ -321,7 +329,40 @@ button.perm-btn { width: 100%; margin-top: 6px; }
 .alarm-row .alarm-del:hover { background: rgba(255,107,107,.18); color: #ffbdbd; }
 .alarm-empty { color: var(--s-dim); font-size: 11px; text-align: center; padding: 6px; }
 
-/* 定时任务 */
+/* 多时区窗口管理器 */
+.cm-editor { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.cm-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.cm-field > span:first-child { white-space: nowrap; }
+.cm-field .dc-select, .cm-field .dc-input { flex: 0 0 230px; width: 230px; }
+body[data-view="settings"] .cm-field .dc-select, body[data-view="settings"] .cm-field .dc-input { flex: 0 0 300px; width: 300px; }
+.cm-field .dc-switch { flex: 0 0 auto; }
+.cm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.cm-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.cm-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.04); border: 1px solid var(--s-line); }
+.cm-row-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cm-row-title { font-size: 13px; font-weight: 600; color: var(--s-fg); }
+.cm-row-meta { font-size: 10.5px; color: var(--s-dim); font-variant-numeric: tabular-nums; }
+.cm-row-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+
+/* 定时任务：输入框与启动/取消同行 */
+.shutdown-line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; margin: 8px 0; }
+/* 高特异性覆盖 body[data-view=settings] 的 230px 规则，确保按钮与输入框同行 */
+body[data-view="settings"] .shutdown-line .dc-input,
+.shutdown-line .dc-input { flex: 1 1 96px; width: auto; min-width: 88px; max-width: 150px; }
+.shutdown-line .unit { font-size: 11px; color: var(--s-dim); white-space: nowrap; flex: 0 0 auto; }
+.shutdown-line .dc-btn { flex: 0 0 auto; white-space: nowrap; }
+
+/* 铃声 */
+.alarm-tone-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+#alarm-custom-status { margin-top: 4px; }
+#alarm-custom-status.ok { color: var(--s-accent); }
+
+/* 权限重试 */
+#perm-retry { margin: 6px 0; display: inline-flex; }
+
+/* 还原设置 */
+.reset-card .dc-btn.reset { width: 100%; margin-bottom: 6px; }
+.reset-note { margin: 0; }
 .shutdown-editor { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .shutdown-editor .dc-input { flex: 0 0 120px; width: 120px; }
 .shutdown-editor .unit { font-size: 11px; color: var(--s-dim); }
@@ -405,7 +446,9 @@ body[data-view="settings"] #settings {
 }
 body[data-view="settings"] .settings-head { padding: 14px 20px; background: #1b1d23; border-bottom: 1px solid var(--s-line); position: sticky; top: 0; z-index: 10; }
 body[data-view="settings"] .settings-head .brand { font-size: 15px; }
-body[data-view="settings"] .settings-head button { display: none; }
+/* 独立设置窗口用系统标题栏的 × 关闭；只隐藏嵌入式面板的关闭按钮，
+   千万不要隐藏 .ver-badge（版本号需要可点击）。 */
+body[data-view="settings"] .settings-head #settings-close { display: none; }
 body[data-view="settings"] .tray-hint { max-width: none; margin: 14px 20px 0; }
 body[data-view="settings"] .settings-body { align-items: flex-start; min-height: calc(100vh - 52px); }
 body[data-view="settings"] .settings-tabs { display: flex; flex: 0 0 150px; padding: 16px 10px; border-right: 1px solid var(--s-line); background: #191b21; }
@@ -418,5 +461,15 @@ body[data-view="settings"] input[type="range"] { flex: 0 0 230px; width: 230px; 
 body[data-view="settings"] .alarm-time .dc-select { flex: 0 0 80px; width: 80px; }
 body[data-view="settings"] .settings label { margin: 10px 0; font-size: 13px; }
 body[data-view="settings"] .donate-qr { width: 230px; }
+/* v0.5 流畅度：隐藏滚动容器原生滚动条（保留滚轮/触控板滚动能力），避免右侧闪动干扰。 */
+body[data-view="settings"] .settings-panels,
+body[data-view="settings"] .alarm-list,
+body[data-view="settings"] .cm-list { scrollbar-width: none; -ms-overflow-style: none; }
+body[data-view="settings"] .settings-panels::-webkit-scrollbar,
+body[data-view="settings"] .alarm-list::-webkit-scrollbar,
+body[data-view="settings"] .cm-list::-webkit-scrollbar { width: 0; height: 0; display: none; }
+body[data-view="settings"] .settings-panels:focus-visible::-webkit-scrollbar,
+body[data-view="settings"] .alarm-list:focus-visible::-webkit-scrollbar,
+body[data-view="settings"] .cm-list:focus-visible::-webkit-scrollbar { display: block; width: 8px; }
 #tray-menu-btn { position: absolute; top: 4px; right: 34px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: rgba(255,255,255,.09); color: rgba(255,255,255,.78); font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .2s ease; z-index: 40; -webkit-app-region: no-drag; }
 #app:hover #tray-menu-btn, #tray-menu-btn:focus-visible { opacity: .9; }

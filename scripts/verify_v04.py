@@ -71,7 +71,7 @@ window.__TAURI__={
       if(cmd==='get_timer_status') return Promise.resolve(null);
       if(cmd==='take_donate_intent') return Promise.resolve(false);
       if(cmd==='get_privilege_status') return Promise.resolve({platform:'windows',isElevated:false,canElevate:true,runAsAdmin:false,note:'shim'});
-      if(cmd==='check_update') return Promise.resolve({latest:'0.4.0'});
+      if(cmd==='check_update') return Promise.resolve({latest:'0.5.0'});
       if(cmd==='get_shutdown_status') return Promise.resolve(null);
     }catch(e){}
     return Promise.resolve();
@@ -159,8 +159,19 @@ with sync_playwright() as pw:
     page.wait_for_timeout(150)
     check("reboot action selectable", prefs(page).get("timerAction") == "reboot")
     check("clock mode pref persisted", prefs(page).get("timerMode") == "clock")
-    check("clock-time input visible in clock mode", page.locator("#shutdown-clock-row").is_visible())
-    check("duration row hidden in clock mode", page.locator("#shutdown-duration-row").is_hidden())
+    check("clock-time input visible in clock mode", page.locator("#shutdown-time").is_visible())
+    check("duration input hidden in clock mode", page.locator("#shutdown-min").is_hidden())
+    # v0.5：启动按钮与输入框同一行
+    _inp = page.locator("#shutdown-time").bounding_box()
+    _btn = page.locator("#shutdown-start").bounding_box()
+    check("start button shares row with clock input", abs(_inp["y"] - _btn["y"]) < 14,
+          (_inp["y"], _btn["y"]))
+    page.locator("#shutdown-mode").select_option("duration"); page.wait_for_timeout(120)
+    _inp2 = page.locator("#shutdown-min").bounding_box()
+    _btn2 = page.locator("#shutdown-start").bounding_box()
+    check("start button shares row with minutes input", abs(_inp2["y"] - _btn2["y"]) < 14,
+          (_inp2["y"], _btn2["y"]))
+    page.locator("#shutdown-mode").select_option("clock"); page.wait_for_timeout(120)
     # minutesUntil: a time 1 minute later should produce 1 (crossing midnight handled)
     m = page.evaluate("() => window.DeskClock.Alarm.minutesUntil('23:59')")
     check("minutesUntil returns positive minutes", isinstance(m, int) and 1 <= m <= 1440, m)
@@ -188,17 +199,37 @@ with sync_playwright() as pw:
     page.locator("#pref-auto-timesync").check(); page.wait_for_timeout(150)
     check("auto time sync pref persisted", prefs(page).get("autoTimeSync") is True)
 
-    # ---- multi timezone config ----
-    check("zone select populated", page.locator("#extra-zone option").count() >= 10,
-          page.locator("#extra-zone option").count())
-    page.locator("#extra-label").fill("纽约")
-    page.locator("#extra-zone").select_option("-300")
-    page.locator("#extra-add").click(); page.wait_for_timeout(200)
+    # ---- v0.5 multi-timezone window manager ----
+    check("manager zone select populated", page.locator("#cm-zone option").count() >= 10,
+          page.locator("#cm-zone option").count())
+    check("manager offers arbitrary UTC offset", page.locator("#cm-zone option[value='__custom__']").count() == 1)
+    check("manager style options", page.locator("#cm-style option").count() >= 8,
+          page.locator("#cm-style option").count())
+    page.locator("#cm-name").fill("纽约")
+    page.locator("#cm-zone").select_option("-300")
+    page.locator("#cm-style").select_option("analog")
+    page.locator("#cm-add").click(); page.wait_for_timeout(200)
     extras = prefs(page).get("extraClocks", [])
-    check("extra clock config persisted", len(extras) == 1 and extras[0]["offset"] == -300, extras)
-    check("extra clock row rendered", page.locator("#extra-list .extra-row").count() == 1)
-    page.locator("#extra-list .extra-del").click(); page.wait_for_timeout(150)
-    check("extra clock removable", len(prefs(page).get("extraClocks", [])) == 0)
+    check("manager config persisted", len(extras) == 1 and extras[0]["offset"] == -300
+          and extras[0]["style"] == "analog", extras)
+    check("manager row rendered", page.locator("#cm-list .cm-row").count() == 1)
+    # 自定义 UTC 偏移（任意时区）
+    page.locator("#cm-name").fill("自定义")
+    page.locator("#cm-zone").select_option("__custom__"); page.wait_for_timeout(100)
+    check("custom offset row visible", page.locator("#cm-custom-row").is_visible())
+    page.locator("#cm-offset").fill("+05:30")
+    page.locator("#cm-add").click(); page.wait_for_timeout(200)
+    extras = prefs(page).get("extraClocks", [])
+    check("arbitrary offset persisted", any(c.get("offset") == 330 for c in extras), extras)
+    # 编辑 / 显示隐藏 / 删除
+    page.locator("#cm-list .cm-row").first.locator("button").nth(0).click(); page.wait_for_timeout(120)
+    check("edit mode exposes save", page.locator("#cm-save").is_visible())
+    page.locator("#cm-save").click(); page.wait_for_timeout(150)
+    check("save returns to add mode", page.locator("#cm-add").is_visible())
+    # 删除全部
+    for _ in range(len(prefs(page).get("extraClocks", []))):
+        page.locator("#cm-list .cm-row").first.locator("button.danger").click(); page.wait_for_timeout(120)
+    check("manager rows removable", len(prefs(page).get("extraClocks", [])) == 0)
 
     # ---- donation copy + link + update ----
     check("donate button renamed to coffee",
@@ -207,7 +238,7 @@ with sync_playwright() as pw:
           page.locator("#donate-toggle").inner_text())
     check("project link present", page.locator("#project-link").count() == 1)
     check("check-update button present", page.locator("#check-update").count() == 1)
-    check("version badge shows 0.4.0", "0.4.0" in page.locator("#ver-badge").inner_text(),
+    check("version badge shows 0.5.0", "0.5.0" in page.locator("#ver-badge").inner_text(),
           page.locator("#ver-badge").inner_text())
     qr = page.locator("#donate-img")
     page.locator("#donate-toggle").click(); page.wait_for_timeout(150)

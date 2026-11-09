@@ -5,11 +5,30 @@
   var SNOOZE_MS = 5 * 60 * 1000;
   var firing = null;
 
-  // v0.4: 用 Web Audio 合成一段柔和的三连提示音，循环播放直到用户处理。
-  // 不打包任何音频资源，零依赖，浏览器/各平台 WebView 都支持。
+  // --------------------------------------------------------------- ring tone
   var audioCtx = null;
   var ringTimer = null;
   var ringOn = false;
+  var customBlobUrl = null;   // v0.5: 用户自定义音频的 blob URL（仅本机内存/本地存储）
+  var currentTone = 'gentle'; // gentle|bell|tick|rise|chord|custom
+  var customEl = null;        // 播放自定义音频的 <audio> 元素
+
+  var ALLOWED_TONES = ['gentle', 'bell', 'tick', 'rise', 'chord', 'custom'];
+
+  function ensureCtx() {
+    if (audioCtx) return audioCtx;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    } catch (e) { audioCtx = null; }
+    return audioCtx;
+  }
+
+  function stopRing() {
+    ringOn = false;
+    if (ringTimer !== null) { clearInterval(ringTimer); ringTimer = null; }
+    if (customEl) { try { customEl.pause(); } catch (e) {} }
+  }
 
   function nowHM() {
     var d = new Date();
@@ -24,47 +43,83 @@
     return core.invoke(cmd, args === undefined ? {} : args);
   }
 
-  // --------------------------------------------------------------- ring tone
-  function ensureCtx() {
-    if (audioCtx) return audioCtx;
-    try {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (AC) audioCtx = new AC();
-    } catch (e) { audioCtx = null; }
-    return audioCtx;
-  }
-
-  // 一次「叮-叮-叮」：三个正弦音 + 轻微衰减包络，音量很轻不刺耳。
-  function chime() {
+  // ------------------------------------------------- tone synthesis helpers
+  function playNote(freq, start, dur, peak) {
     var ctx = ensureCtx();
     if (!ctx) return;
     if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
-    var t0 = ctx.currentTime;
-    var notes = [880, 1108.73, 1318.51]; // A5, C#6, E6 —— 大三和弦
-    notes.forEach(function (f, i) {
-      var osc = ctx.createOscillator();
-      var gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(f, t0 + i * 0.18);
-      gain.gain.setValueAtTime(0.0001, t0 + i * 0.18);
-      gain.gain.exponentialRampToValueAtTime(0.14, t0 + i * 0.18 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.18 + 0.42);
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.start(t0 + i * 0.18);
-      osc.stop(t0 + i * 0.18 + 0.45);
-    });
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(peak || 0.16, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(start); osc.stop(start + dur + 0.02);
   }
 
-  function startRing() {
+  function chime(type) {
+    var ctx = ensureCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+    var t0 = ctx.currentTime, i;
+    switch (type || currentTone) {
+      case 'gentle':   // 柔和三连：A5 C#6 E6
+        [880, 1108.73, 1318.51].forEach(function (f, j) { playNote(f, t0 + j * 0.18, 0.42); });
+        break;
+      case 'bell':     // 清脆叮咚：两个四度音快速连击（带泛音）
+        [659.25, 880].forEach(function (f, j) {
+          playNote(f, t0 + j * 0.12, 0.35, 0.14);
+          playNote(f * 1.5, t0 + j * 0.12 + 0.05, 0.30, 0.07);
+        });
+        break;
+      case 'tick':     // 电子滴答：三个方波短脉冲
+        for (i = 0; i < 3; i++) {
+          var o = ctx.createOscillator(), g = ctx.createGain();
+          o.type = 'square'; o.frequency.value = 880;
+          g.gain.setValueAtTime(0.0001, t0 + i * 0.25);
+          g.gain.exponentialRampToValueAtTime(0.06, t0 + i * 0.25 + 0.005);
+          g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.25 + 0.08);
+          o.connect(g); g.connect(ctx.destination);
+          o.start(t0 + i * 0.25); o.stop(t0 + i * 0.25 + 0.10);
+        }
+        break;
+      case 'rise':     // 上升音阶：C E G C(高)
+        [523.25, 659.25, 783.99, 1046.50].forEach(function (f, j) { playNote(f, t0 + j * 0.14, 0.28, 0.13); });
+        break;
+      case 'chord':    // 和弦钟声：大九和弦同时发声后衰减
+        [523.25, 659.25, 783.99, 987.77, 1174.66].forEach(function (f) { playNote(f, t0, 0.85, 0.09); });
+        break;
+      case 'custom':   // 由 <audio> 元素处理
+        break;
+    }
+  }
+
+  function playCustom() {
+    if (!customBlobUrl) { chime('gentle'); return; }
+    if (!customEl) {
+      customEl = document.createElement('audio');
+      customEl.id = 'alarm-custom-audio';
+      customEl.loop = true;
+      customEl.preload = 'auto';
+      document.body.appendChild(customEl);
+    }
+    if (customEl.src !== customBlobUrl) customEl.src = customBlobUrl;
+    try { customEl.currentTime = 0; customEl.play(); }
+    catch (e) { chime('gentle'); }
+  }
+
+  function startRing(forceTone) {
     stopRing();
     ringOn = true;
-    chime();
-    ringTimer = setInterval(function () { if (ringOn) chime(); }, 2200);
-  }
-
-  function stopRing() {
-    ringOn = false;
-    if (ringTimer !== null) { clearInterval(ringTimer); ringTimer = null; }
+    if (forceTone && ALLOWED_TONES.indexOf(forceTone) >= 0) currentTone = forceTone;
+    if (currentTone === 'custom' && customBlobUrl) {
+      playCustom();
+      return;
+    }
+    chime(currentTone);
+    ringTimer = setInterval(function () { if (ringOn) chime(currentTone); }, 2100);
   }
 
   // Called once per clock tick. Returns the list of alarms that just fired.
@@ -88,9 +143,6 @@
     return { id: newId(), time: hm, repeat: false };
   }
 
-  // v0.4: 统一入口。action = shutdown|reboot，mode = duration|clock。
-  // 时间点模式在前端算出「从现在到目标时刻」的分钟数（跨天自动取次日），
-  // 交给 Rust 用系统 shutdown/reboot 命令执行，避免 Rust 侧处理时区。
   function minutesUntil(hhmm) {
     var m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
     if (!m) return 0;
@@ -106,18 +158,47 @@
     if (mins < 1) return Promise.reject(new Error('invalid time'));
     var d = new Date(Date.now() + mins * 60000);
     var label = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
-    return invoke('schedule_timer', {
-      action: action, minutes: mins, label: label
-    });
+    return invoke('schedule_timer', { action: action, minutes: mins, label: label });
   }
 
   function cancelTimer() { return invoke('cancel_timer'); }
   function timerStatus() { return invoke('get_timer_status'); }
 
-  // 兼容旧命令名（回归脚本/v0.3 调用）
-  function scheduleShutdown(minutes) { return scheduleTimer('shutdown', 'duration', minutes, ''); }
-  function cancelShutdown() { return cancelTimer(); }
-  function shutdownStatus() { return timerStatus(); }
+  // 自定义音频以 base64 存在 localStorage（≤500KB，经 UI 校验），
+  // 启动时还原为 blob URL；不写进 prefs.json，避免污染跨窗口同步。
+  var CUSTOM_KEY = 'deskclock.alarm.customAudioB64';
+
+  function readCustomFromStorage() {
+    try {
+      var raw = localStorage.getItem(CUSTOM_KEY);
+      if (!raw) return null;
+      var bin = atob(raw);
+      var buf = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(0);
+      return URL.createObjectURL(new Blob([buf], { type: 'audio/*' }));
+    } catch (e) { return null; }
+  }
+
+  function saveCustomToStorage(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file || file.size > 500 * 1024) { reject(new Error('too big')); return; }
+      if (!/^audio\//.test(file.type) && !/\.(mp3|wav|ogg|m4a|aac|flac|webm)$/i.test(file.name || '')) {
+        reject(new Error('not audio')); return;
+      }
+      var r = new FileReader();
+      r.onload = function () {
+        try {
+          var b64 = String(r.result).split(',')[1];
+          localStorage.setItem(CUSTOM_KEY, b64);
+          resolve(b64);
+        } catch (e) { reject(e); }
+      };
+      r.onerror = function () { reject(new Error('read failed')); };
+      r.readAsDataURL(file);
+    });
+  }
+
+  customBlobUrl = readCustomFromStorage();
 
   window.DeskClock.Alarm = {
     check: check, snooze: snooze, newId: newId,
@@ -126,6 +207,25 @@
     startRing: startRing, stopRing: stopRing,
     minutesUntil: minutesUntil,
     scheduleTimer: scheduleTimer, cancelTimer: cancelTimer, timerStatus: timerStatus,
-    scheduleShutdown: scheduleShutdown, cancelShutdown: cancelShutdown, shutdownStatus: shutdownStatus
+    scheduleShutdown: function (mins) { return scheduleTimer('shutdown', 'duration', mins, ''); },
+    cancelShutdown: cancelTimer,
+    shutdownStatus: timerStatus,
+    ALLOWED_TONES: ALLOWED_TONES,
+    getCurrentTone: function () { return currentTone; },
+    setCurrentTone: function (t) { if (ALLOWED_TONES.indexOf(t) >= 0) currentTone = t; },
+    // 自定义音频 API
+    getHasCustom: function () { return !!customBlobUrl; },
+    setCustomAudioUrl: function (url) { customBlobUrl = url; },
+    clearCustomAudio: function () {
+      if (customBlobUrl) { try { URL.revokeObjectURL(customBlobUrl); } catch (e) {} customBlobUrl = null; }
+      try { localStorage.removeItem(CUSTOM_KEY); } catch (e) {}
+      if (customEl) { try { customEl.pause(); } catch (e) {} }
+    },
+    saveCustomAudio: function (file) {
+      return saveCustomToStorage(file).then(function () {
+        customBlobUrl = readCustomFromStorage();
+        return !!customBlobUrl;
+      });
+    }
   };
 })();

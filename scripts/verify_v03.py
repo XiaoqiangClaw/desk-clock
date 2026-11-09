@@ -158,7 +158,8 @@ with sync_playwright() as pw:
     settings.locator('#settings-tabs .tab[data-tab="permission"]').click()
     settings.wait_for_timeout(150)
     check("native shim activates admin row", settings.locator("#perm-admin-row").is_visible())
-    settings.locator('#settings-tabs .tab[data-tab="about"]').click()
+    # v0.5: 托盘说明已移入「窗口」Tab（避免与「外观」Tab 上沿重叠）。
+    settings.locator('#settings-tabs .tab[data-tab="window"]').click()
     settings.wait_for_timeout(120)
     check("tray hint shown in native-simulated settings window",
           settings.locator("#tray-hint").is_visible())

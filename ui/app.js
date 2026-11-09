@@ -13,7 +13,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.4.0';
+  var APP_VERSION = '0.5.0';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -27,16 +27,38 @@
     { label: 'UTC-7  丹佛', offset: -420 },
     { label: 'UTC-6  芝加哥', offset: -360 },
     { label: 'UTC-5  纽约', offset: -300 },
+    { label: 'UTC-4  多伦多', offset: -240 },
+    { label: 'UTC-3  圣保罗', offset: -180 },
     { label: 'UTC+0  伦敦', offset: 0 },
     { label: 'UTC+1  巴黎/柏林', offset: 60 },
+    { label: 'UTC+2  开罗', offset: 120 },
     { label: 'UTC+3  莫斯科', offset: 180 },
     { label: 'UTC+4  迪拜', offset: 240 },
     { label: 'UTC+5:30 印度', offset: 330 },
+    { label: 'UTC+7  曼谷', offset: 420 },
     { label: 'UTC+8  北京/新加坡', offset: 480 },
     { label: 'UTC+9  东京', offset: 540 },
     { label: 'UTC+10 悉尼', offset: 600 },
-    { label: 'UTC+12 奥克兰', offset: 720 }
+    { label: 'UTC+11 墨尔本', offset: 660 },
+    { label: 'UTC+12 奥克兰', offset: 720 },
+    { label: 'UTC+14 斐济', offset: 840 }
   ];
+  // 「任意时区」输入：支持 ±HH:MM / ±HH（分钟）
+  function parseZoneInput(raw) {
+    var s = String(raw || '').trim();
+    var m = /^(\+|-)?(\d{1,2})(?::(\d{2}))?$/.exec(s);
+    if (!m) return null;
+    var sign = m[1] === '-' ? -1 : 1;
+    var off = sign * ((Number(m[2]) * 60) + Number(m[3] || 0));
+    if (off < -840 || off > 840) return null;
+    return off;
+  }
+  function zoneLabelFor(offset) {
+    for (var i = 0; i < ZONES.length; i++) if (ZONES[i].offset === offset) return ZONES[i].label;
+    var h = Math.floor(Math.abs(offset) / 60), m2 = Math.abs(offset) % 60;
+    var mm = m2 ? ':' + ('0' + m2).slice(-2) : '';
+    return 'UTC' + (offset >= 0 ? '+' : '') + h + mm;
+  }
 
   var app = document.getElementById('app');
   var clockEl = document.getElementById('clock');
@@ -51,14 +73,20 @@
   var lastAlarmKey = '';
   var timerTarget = null;   // {label, action}
   var privStatus = null;
+  var privError = false;    // v0.5: 权限状态读取失败（显示重试按钮）
+  var editingClockId = null; // v0.5: 管理器正在编辑的窗口 id
 
-  // v0.3 dual-view + v0.4 extra clock windows.
+  // v0.3 dual-view + v0.5 extra clock windows.
   // __DC_VIEW__ === 'settings' -> independent settings window.
   // __DC_EXTRA__ === 1        -> an extra timezone clock window.
   var isSettingsWindow = window.__DC_VIEW__ === 'settings';
   var isExtraWindow = !!window.__DC_EXTRA__;
   var tzOffset = (typeof window.__DC_TZ_OFFSET__ === 'number') ? window.__DC_TZ_OFFSET__ : null;
   var tzLabel = window.__DC_TZ_LABEL__ || '';
+  // v0.5 管理器：每窗口独立样式/秒显示（空字符串=跟随全局）
+  var injectedStyle = window.__DC_STYLE__ || '';
+  var injectedShowSeconds = (typeof window.__DC_SHOW_SECONDS__ === 'boolean')
+    ? window.__DC_SHOW_SECONDS__ : null;
 
   var settings = document.getElementById('settings');
 
@@ -93,23 +121,31 @@
     return new Date(now.getTime() + (tzOffset + now.getTimezoneOffset()) * 60000);
   }
 
-  function applyRoot() {
-    var style = STYLES.indexOf(state.style) >= 0 ? state.style : 'flip';
+  // v0.5：有效「显示秒」= 额外窗口若指定了注入值则用之，否则跟随全局。
+  function effectiveShowSeconds() {
+    if (isExtraWindow && injectedShowSeconds !== null) return injectedShowSeconds;
+    return !!state.showSeconds;
+  }
+
+  // v0.5 流畅度优化：applyRoot 拆为两档——
+  // applyRootLite：滑块 input 等高频事件只改 CSS 变量（无 DOM 遍历）；
+  // applyRoot（完整）：语言/样式等低频变化才重刷 i18n 与全部 data-* 属性。
+  function applyRootLite() {
+    // v0.5 管理器：额外时钟窗口可覆盖样式/秒显示；空字符串=跟随全局 state。
+    var effStyle = (isExtraWindow && injectedStyle && STYLES.indexOf(injectedStyle) >= 0)
+      ? injectedStyle : state.style;
+    var style = STYLES.indexOf(effStyle) >= 0 ? effStyle : 'flip';
     var backdrop = BACKDROPS.indexOf(state.backdrop) >= 0 ? state.backdrop : 'none';
     state.style = style;
     state.backdrop = backdrop;
     app.setAttribute('data-style', style);
     app.setAttribute('data-backdrop', backdrop);
     app.setAttribute('data-show-sep', String(!!state.showSeparator));
-    app.setAttribute('data-analog-theme', state.analogTheme === 'light' ? 'light' : 'dark');
-    app.setAttribute('data-analog-penetrate', String(!!state.analogPenetrate));
 
     var sc = Number(state.scale) || 1;
     app.style.setProperty('--dc-scale', String(sc));
 
-    // 🔴 关键修复：不透明度只作用于时钟窗口，设置窗口永远清晰。
-    // 浏览器预览里设置面板是 #app 的子元素，同样不应被半透明化，
-    // 因此仅在「纯时钟窗口」（非设置窗口、且设置面板未打开）应用 opacity。
+    // 🔴 不透明度只作用于时钟窗口，设置窗口永远清晰。
     if (isSettingsWindow) {
       app.style.removeProperty('opacity');
     } else if (!isOwnPanelOpen()) {
@@ -132,6 +168,14 @@
     }
     var out = byId('scale-out');
     if (out) out.textContent = Math.round(sc * 100) + '%';
+  }
+
+  function applyRoot() {
+    applyRootLite();
+    // v0.5 管理器：额外时钟窗口的秒显示由注入值优先，否则跟随全局
+    app.setAttribute('data-show-sep', String(!!state.showSeparator));
+    app.setAttribute('data-analog-theme', state.analogTheme === 'light' ? 'light' : 'dark');
+    app.setAttribute('data-analog-penetrate', String(!!state.analogPenetrate));
     I18n.apply(state.lang);
     if (isSettingsWindow) document.title = state.lang === 'en' ? 'Desk Clock · Settings' : 'Desk Clock · 设置';
     var vb = byId('ver-badge'); if (vb) vb.textContent = 'v' + APP_VERSION;
@@ -157,15 +201,18 @@
       next.showSeconds !== state.showSeconds ||
       next.hour12 !== state.hour12 ||
       next.analogTheme !== state.analogTheme;
+    var isSettings = isSettingsWindow; // 设置窗口才需要重刷控制面板
     state = Prefs.normalize(next);
-    applyRoot();
+    // 高频跨窗口同步：时钟窗口走轻路径（只改 CSS 变量），设置窗口才全量
+    if (isSettings) applyRoot(); else applyRootLite();
     if (engine) {
       engine.setOptions({
-        showSeconds: state.showSeconds, hour12: state.hour12,
+        showSeconds: isExtraWindow ? effectiveShowSeconds() : state.showSeconds,
+        hour12: state.hour12,
         animate: state.style === 'flip'
       });
     }
-    syncControls();
+    if (isSettings) syncControls();
     if (rebuild && engine && !isSettingsWindow) {
       var now = displayNow();
       ensureDom(engine.buildParts(now), true);
@@ -182,10 +229,22 @@
     var toggle = byId('perm-run-admin');
     var nowBtn = byId('perm-elevate-now');
     var quitBtn = byId('perm-quit');
+    var retryBtn = byId('perm-retry');
     if (!box) return;
     var L = STRINGS_LANG();
     var s = privStatus;
+    if (privError) {
+      box.textContent = I18n.t(L, 'permCheckFail');
+      box.className = 'perm-status standard';
+      if (note) note.textContent = '';
+      if (retryBtn) { retryBtn.hidden = false; retryBtn.disabled = false; retryBtn.textContent = I18n.t(L, 'permRetry'); }
+      row.hidden = true; nowBtn.hidden = true;
+      quitBtn.hidden = !Prefs.isNative;
+      return;
+    }
+    if (retryBtn) { retryBtn.hidden = true; retryBtn.disabled = false; }
     if (!s) {
+      // 仅在真正加载中显示；loadPrivilege 保证 4s 内必达（成功或 privError）。
       box.textContent = I18n.t(L, 'permChecking');
       box.className = 'perm-status';
       if (note) note.textContent = '';
@@ -210,8 +269,16 @@
   }
 
   function loadPrivilege() {
+    privError = false;
+    privStatus = null;
+    renderPrivilege();
     Prefs.privilegeStatus().then(function (s) {
-      privStatus = s; renderPrivilege();
+      // unknown + 空 note 代表读取失败（含超时）→ 显示重试，不再永远「正在检查」。
+      privError = !!(s && s.platform === 'unknown');
+      privStatus = s;
+      renderPrivilege();
+    }).catch(function () {
+      privError = true; privStatus = null; renderPrivilege();
     });
   }
 
@@ -223,7 +290,8 @@
       for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
       var panels = document.querySelectorAll('#settings-panels .panel');
       for (var j = 0; j < panels.length; j++) panels[j].classList.toggle('active', panels[j].getAttribute('data-panel') === name);
-      var box = byId('settings-panels'); if (box) box.scrollTop = 0;
+      var box = byId('settings-panels');
+      if (box && isSettingsWindow) { try { box.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { box.scrollTop = 0; } }
     }
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].addEventListener('click', function () { activate(this.getAttribute('data-tab')); });
@@ -283,9 +351,83 @@
     });
   }
 
-  // ------------------------------------------- multi-timezone extra windows
-  function renderExtraList() {
-    var box = byId('extra-list');
+  // ------------------------------------------- v0.5 多时区窗口管理器
+  function cmOffsetText(offset) {
+    var h = Math.floor(Math.abs(offset) / 60), m2 = Math.abs(offset) % 60;
+    return 'UTC' + (offset >= 0 ? '+' : '-') + h + (m2 ? ':' + ('0' + m2).slice(-2) : '');
+  }
+
+  function cmResetEditor() {
+    editingClockId = null;
+    var name = byId('cm-name'); if (name) name.value = '';
+    var zone = byId('cm-zone'); if (zone) zone.value = '480';
+    var off = byId('cm-offset'); if (off) off.value = '';
+    var style = byId('cm-style'); if (style) style.value = '';
+    var secs = byId('cm-seconds'); if (secs) secs.checked = true;
+    var add = byId('cm-add'); if (add) add.hidden = false;
+    var save = byId('cm-save'); if (save) save.hidden = true;
+    var cancel = byId('cm-cancel'); if (cancel) cancel.hidden = true;
+    var hint = byId('cm-edit-hint'); if (hint) hint.hidden = true;
+    cmToggleCustomRow();
+  }
+
+  function cmToggleCustomRow() {
+    var zone = byId('cm-zone');
+    var row = byId('cm-custom-row');
+    var hint = byId('cm-offset-hint');
+    var isCustom = zone && zone.value === '__custom__';
+    if (row) row.hidden = !isCustom;
+    if (hint) hint.hidden = !isCustom;
+  }
+
+  function cmReadEditor() {
+    var L = STRINGS_LANG();
+    var nameEl = byId('cm-name'), zoneEl = byId('cm-zone');
+    var label = (nameEl.value || '').trim();
+    var offset;
+    if (zoneEl.value === '__custom__') {
+      offset = parseZoneInput(byId('cm-offset').value);
+      if (offset === null) { byId('cm-offset').focus(); return null; }
+    } else {
+      offset = Number(zoneEl.value) || 0;
+    }
+    if (!label) label = zoneLabelFor(offset);
+    return {
+      label: label.slice(0, 16),
+      offset: offset,
+      style: byId('cm-style').value,
+      showSeconds: byId('cm-seconds').checked,
+      visible: true
+    };
+  }
+
+  function cmFillEditor(c) {
+    byId('cm-name').value = c.label;
+    var zone = byId('cm-zone');
+    var match = String(c.offset);
+    var has = false;
+    for (var i = 0; i < zone.options.length; i++) if (zone.options[i].value === match) { has = true; break; }
+    if (has) { zone.value = match; byId('cm-offset').value = ''; }
+    else { zone.value = '__custom__'; byId('cm-offset').value = cmOffsetText(c.offset).replace('UTC', ''); }
+    byId('cm-style').value = c.style || '';
+    byId('cm-seconds').checked = c.showSeconds !== false;
+    editingClockId = c.id;
+    byId('cm-add').hidden = true;
+    byId('cm-save').hidden = false;
+    byId('cm-cancel').hidden = false;
+    byId('cm-edit-hint').hidden = false;
+    cmToggleCustomRow();
+  }
+
+  function cmSpawn(c) {
+    if (Prefs.isNative) {
+      Prefs.addClockWindow(c.id, c.label, c.offset, c.style, c.showSeconds, c.visible)
+        .catch(function () {});
+    }
+  }
+
+  function renderClockManager() {
+    var box = byId('cm-list');
     if (!box) return;
     var L = STRINGS_LANG();
     box.textContent = '';
@@ -293,26 +435,124 @@
     if (!list.length) {
       var empty = document.createElement('div');
       empty.className = 'alarm-empty';
-      empty.textContent = I18n.t(L, 'extraEmpty');
+      empty.textContent = I18n.t(L, 'cmEmpty');
       box.appendChild(empty);
       return;
     }
     list.forEach(function (c) {
       var row = document.createElement('div');
-      row.className = 'extra-row';
-      var span = document.createElement('span');
-      span.textContent = c.label + '  (UTC' + (c.offset >= 0 ? '+' : '') + (c.offset / 60) + ')';
-      var btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'extra-del'; btn.textContent = '×';
-      btn.title = '关闭';
-      btn.addEventListener('click', function () {
+      row.className = 'cm-row';
+
+      var info = document.createElement('div');
+      info.className = 'cm-row-info';
+      var title = document.createElement('div');
+      title.className = 'cm-row-title';
+      title.textContent = c.label;
+      var meta = document.createElement('div');
+      meta.className = 'cm-row-meta';
+      meta.textContent = cmOffsetText(c.offset) + ' · ' +
+        (c.style ? ((I18n.t(L, 'styles') || {})[c.style] || c.style) : I18n.t(L, 'cmStyleGlobal')) +
+        ' · ' + (c.visible === false ? I18n.t(L, 'cmStopped') : I18n.t(L, 'cmRunning'));
+      info.appendChild(title); info.appendChild(meta);
+
+      var actions = document.createElement('div');
+      actions.className = 'cm-row-actions';
+      function mk(labelKey, cls, fn) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'dc-btn tiny ' + (cls || 'ghost');
+        b.textContent = I18n.t(L, labelKey);
+        b.addEventListener('click', fn);
+        return b;
+      }
+      actions.appendChild(mk('cmEdit', 'ghost', function () { cmFillEditor(c); }));
+      actions.appendChild(mk(c.visible === false ? 'cmShow' : 'cmHide', 'ghost', function () {
+        var vis = !(c.visible !== false);
+        var next = (state.extraClocks || []).map(function (x) {
+          return x.id === c.id ? Object.assign({}, x, { visible: vis }) : x;
+        });
+        changed({ extraClocks: next });
+        if (Prefs.isNative) Prefs.setClockWindowVisible(c.id, vis).catch(function () {});
+      }));
+      actions.appendChild(mk('cmDelete', 'danger', function () {
         var next = (state.extraClocks || []).filter(function (x) { return x.id !== c.id; });
         changed({ extraClocks: next });
         if (Prefs.isNative) Prefs.closeClockWindow(c.id).catch(function () {});
-      });
-      row.appendChild(span); row.appendChild(btn);
+        if (editingClockId === c.id) cmResetEditor();
+      }));
+
+      row.appendChild(info); row.appendChild(actions);
       box.appendChild(row);
     });
+  }
+
+  // v0.5：同步「自定义音频」相关控件状态（显示/隐藏/提示文本）。
+  function syncAlarmToneUI() {
+    var toneSel = byId('pref-alarm-tone');
+    if (!toneSel) return;
+    toneSel.value = (typeof state !== 'undefined' && state && Alarm.ALLOWED_TONES.indexOf(state.alarmTone) >= 0)
+      ? state.alarmTone : 'gentle';
+    var hasCustom = Alarm.getHasCustom();
+    byId('alarm-custom-pick').hidden = hasCustom;          // 已有自定义则隐藏「选择」
+    byId('alarm-custom-clear').hidden = !hasCustom;        // 没有则隐藏「移除」
+    var st = byId('alarm-custom-status');
+    if (st) {
+      st.textContent = hasCustom
+        ? (state && state.alarmTone === 'custom' ? I18n.t(STRINGS_LANG(), 'toneCustom') : I18n.t(STRINGS_LANG(), 'alarmCustomNone'))
+        : I18n.t(STRINGS_LANG(), 'alarmCustomNone');
+      st.classList.toggle('ok', hasCustom && state && state.alarmTone === 'custom');
+    }
+  }
+
+  function bindClockManager() {
+    var zone = byId('cm-zone');
+    if (zone) {
+      ZONES.forEach(function (z) {
+        var o = document.createElement('option');
+        o.value = String(z.offset); o.textContent = z.label;
+        zone.appendChild(o);
+      });
+      var custom = document.createElement('option');
+      custom.value = '__custom__';
+      custom.textContent = I18n.t(STRINGS_LANG(), 'cmCustomZone');
+      zone.appendChild(custom);
+      zone.value = '480';
+    }
+    var styleSel = byId('cm-style');
+    if (styleSel) {
+      STYLES.forEach(function (s) {
+        var o = document.createElement('option');
+        o.value = s;
+        o.textContent = (I18n.t(STRINGS_LANG(), 'styles') || {})[s] || s;
+        styleSel.appendChild(o);
+      });
+    }
+    if (zone) zone.addEventListener('change', cmToggleCustomRow);
+    cmToggleCustomRow();
+
+    byId('cm-add').addEventListener('click', function () {
+      var c = cmReadEditor();
+      if (!c) return;
+      c.id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      var list = (state.extraClocks || []).slice();
+      if (list.length >= 8) return;
+      list.push(c);
+      changed({ extraClocks: list });
+      cmSpawn(c);
+      cmResetEditor();
+    });
+    byId('cm-save').addEventListener('click', function () {
+      if (!editingClockId) return;
+      var c = cmReadEditor();
+      if (!c) return;
+      var list = (state.extraClocks || []).map(function (x) {
+        return x.id === editingClockId ? Object.assign({}, x, c) : x;
+      });
+      changed({ extraClocks: list });
+      // 重建窗口（销毁旧的→按新样式/秒/时区重新创建）
+      cmSpawn(Object.assign({ id: editingClockId }, c));
+      cmResetEditor();
+    });
+    byId('cm-cancel').addEventListener('click', cmResetEditor);
   }
 
   // ---------------------------------------------------------- extra binds
@@ -338,12 +578,18 @@
       var b = this; b.disabled = true;
       var L = STRINGS_LANG();
       b.textContent = L === 'en' ? 'Requesting…' : '正在请求授权…';
-      Prefs.restartElevated().catch(function (err) {
+      Prefs.restartElevated().then(function () {
+        // 提权成功时本进程将退出；若仍在此（取消授权）则恢复并提示。
         b.disabled = false; b.textContent = I18n.t(L, 'permElevateNow');
-        var s = byId('perm-status'); if (s) s.textContent = String(err || 'failed');
+        loadPrivilege();
+      }).catch(function (err) {
+        b.disabled = false; b.textContent = I18n.t(L, 'permElevateNow');
+        var s = byId('perm-status'); if (s) s.textContent = I18n.t(L, 'permElevateFailed');
+        var note = byId('perm-note'); if (note && err) note.textContent = String(err.message || err);
       });
     });
     byId('perm-quit').addEventListener('click', function () { Prefs.quitApp(); });
+    byId('perm-retry').addEventListener('click', function () { loadPrivilege(); });
 
     // Donation controls
     byId('donate-toggle').addEventListener('click', function () {
@@ -363,6 +609,14 @@
     byId('project-link').addEventListener('click', function () {
       Prefs.openUrl(PROJECT_URL).catch(function () { /* browser preview: no-op */ });
     });
+    // v0.5：版本号徽标可直接点击跳转到项目主页
+    (function () {
+      var vb = byId('ver-badge'), av = byId('about-version');
+      [vb, av].forEach(function (el) {
+        if (!el) return;
+        el.addEventListener('click', function () { Prefs.openUrl(PROJECT_URL).catch(function () {}); });
+      });
+    })();
     byId('check-update').addEventListener('click', function () { checkUpdate(true); });
     (function () {
       var dl = byId('download-update');
@@ -398,6 +652,51 @@
     // Alarm sound test
     byId('alarm-test-sound').addEventListener('click', function () { Alarm.startRing(); setTimeout(function () { Alarm.stopRing(); }, 1600); });
 
+    // v0.5 铃声：预设选择 + 试听 + 自定义音频
+    (function () {
+      var toneSel = byId('pref-alarm-tone');
+      toneSel.addEventListener('change', function () {
+        var v = toneSel.value;
+        Alarm.setCurrentTone(v);
+        changed({ alarmTone: v });
+        syncAlarmToneUI();
+        if (v !== 'custom') Alarm.startRing(); setTimeout(function () { Alarm.stopRing(); }, 900);
+      });
+      byId('alarm-custom-pick').addEventListener('click', function () { byId('alarm-custom-file').click(); });
+      byId('alarm-custom-file').addEventListener('change', function (e) {
+        var f = e.target.files && e.target.files[0];
+        if (!f) return;
+        var L = STRINGS_LANG(), st = byId('alarm-custom-status');
+        Alarm.saveCustomAudio(f).then(function (ok) {
+          if (ok) {
+            byId('pref-alarm-tone').value = 'custom';
+            Alarm.setCurrentTone('custom');
+            changed({ alarmTone: 'custom' });
+            st.textContent = I18n.t(L, 'toneCustom');
+            st.classList.add('ok');
+            Alarm.startRing(); setTimeout(function () { Alarm.stopRing(); }, 1200);
+          } else {
+            st.textContent = I18n.t(L, 'alarmCustomTooBig');
+            st.classList.remove('ok');
+          }
+          syncAlarmToneUI();
+        });
+      });
+      byId('alarm-custom-clear').addEventListener('click', function () {
+        Alarm.clearCustomAudio();
+        byId('pref-alarm-tone').value = 'gentle';
+        Alarm.setCurrentTone('gentle');
+        changed({ alarmTone: 'gentle' });
+        var st = byId('alarm-custom-status');
+        st.textContent = I18n.t(STRINGS_LANG(), 'alarmCustomNone');
+        st.classList.remove('ok');
+        syncAlarmToneUI();
+      });
+    })();
+
+    // v0.5 多时区窗口管理器
+    bindClockManager();
+
     // Time sync
     (function () {
       var clockLabel = byId('sync-clock');
@@ -418,35 +717,8 @@
       });
     });
 
-    // Extra timezone windows
-    (function () {
-      var sel = byId('extra-zone');
-      if (sel) {
-        ZONES.forEach(function (z) {
-          var o = document.createElement('option');
-          o.value = String(z.offset); o.textContent = z.label;
-          sel.appendChild(o);
-        });
-        sel.value = '0';
-      }
-      byId('extra-add').addEventListener('click', function () {
-        var labelEl = byId('extra-label');
-        var label = (labelEl.value || '').trim() || (sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : 'Clock');
-        var offset = Number(sel.value) || 0;
-        var list = (state.extraClocks || []).slice();
-        var id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-        list.push({ id: id, label: label, offset: offset });
-        changed({ extraClocks: list });
-        labelEl.value = '';
-        if (Prefs.isNative) Prefs.addClockWindow(id, label, offset).catch(function () {});
-        else {
-          var st = document.createElement('div');
-          st.className = 'field-note';
-          st.textContent = I18n.t(STRINGS_LANG(), 'extraBrowserOnly');
-          var box = byId('extra-list'); if (box) box.appendChild(st);
-        }
-      });
-    })();
+    // v0.5: 旧的单行多时区编辑器已被「多时区窗口管理器」(cm-*) 取代，
+    // 不再绑定 extra-zone/extra-label/extra-add（这些元素已从 HTML 删除）。
 
     loadPrivilege();
   }
@@ -625,6 +897,16 @@
     }
   }
 
+  function syncTimerModeUI() {
+    // v0.5：输入框与「启动/取消」同行，单位随模式切换
+    var mode = byId('shutdown-mode').value;
+    var isClock = mode === 'clock';
+    byId('shutdown-min').hidden = isClock;
+    byId('shutdown-time').hidden = !isClock;
+    byId('shutdown-unit-min').hidden = isClock;
+    byId('shutdown-unit-clock').hidden = !isClock;
+  }
+
   function updateTimerUI() {
     var L = STRINGS_LANG();
     var status = byId('shutdown-status');
@@ -661,27 +943,35 @@
     byId('analog-theme-row').hidden = state.style !== 'analog';
     byId('pref-clickthrough').checked = !!state.clickThrough;
     byId('pref-alarm-sound').checked = !!state.alarmSound;
+    byId('pref-auto-timesync').checked = !!state.autoTimeSync;
     byId('shutdown-action').value = state.timerAction;
     byId('shutdown-mode').value = state.timerMode;
-    byId('shutdown-duration-row').hidden = state.timerMode !== 'duration';
-    byId('shutdown-clock-row').hidden = state.timerMode !== 'clock';
-    byId('pref-auto-timesync').checked = !!state.autoTimeSync;
+    syncTimerModeUI();
     var out = byId('scale-out');
     if (out) out.textContent = Math.round((Number(state.scale) || 1) * 100) + '%';
     renderAlarmList();
-    renderExtraList();
+    syncAlarmToneUI();
+    renderClockManager();
     updateTimerUI();
+    var vb = byId('ver-badge'), av = byId('about-version');
+    if (vb) vb.textContent = 'v' + APP_VERSION;
+    if (av) av.textContent = APP_VERSION;
   }
 
   function changed(patch, opts) {
     var k;
     for (k in patch) if (Object.prototype.hasOwnProperty.call(patch, k)) state[k] = patch[k];
     Prefs.save(patch);
-    applyRoot();
+    // 高频滑块（scale/opacity）走轻路径，避免全量 i18n/DOM 遍历造成卡顿；
+    // 其它低频变化走完整 applyRoot。
+    var liteOnly = !!(opts && opts.lite);
+    if (liteOnly) applyRootLite();
+    else applyRoot();
 
     if (engine) {
       engine.setOptions({
-        showSeconds: state.showSeconds, hour12: state.hour12,
+        showSeconds: isExtraWindow ? effectiveShowSeconds() : state.showSeconds,
+        hour12: state.hour12,
         animate: state.style === 'flip'
       });
     }
@@ -694,6 +984,12 @@
       var parts = engine.buildParts(now);
       ensureDom(parts, true);
       renderFrame({ parts: parts, now: now });
+    }
+    // 高频轻路径（滑块/拖拽）只更新自身数值显示，避免整面板重绘卡顿
+    if (liteOnly && !opts.rebuild) {
+      var so = byId('scale-out');
+      if (so) so.textContent = Math.round((Number(state.scale) || 1) * 100) + '%';
+      return;
     }
     syncControls();
   }
@@ -741,7 +1037,9 @@
       applyRoot();
     }
     byId('settings-close').addEventListener('click', close);
-    byId('settings-close-2').addEventListener('click', close);
+    // v0.5：关于页底部的「关闭」按钮已删除（头部 × 即可关闭）；旧版本若残留则仍绑定
+    var sc2 = byId('settings-close-2');
+    if (sc2) sc2.addEventListener('click', close);
     byId('reset-defaults').addEventListener('click', resetDefaults);
 
     document.addEventListener('keydown', function (e) {
@@ -779,11 +1077,14 @@
     byId('pref-clickthrough').addEventListener('change', function (e) { changed({ clickThrough: e.target.checked }); });
     byId('pref-alarm-sound').addEventListener('change', function (e) { changed({ alarmSound: e.target.checked }); });
     byId('pref-backdrop').addEventListener('change', function (e) { changed({ backdrop: e.target.value }); });
-    byId('pref-scale').addEventListener('input', function (e) { changed({ scale: Number(e.target.value) }); });
-    byId('pref-opacity').addEventListener('input', function (e) { changed({ opacity: Number(e.target.value) }); });
+    byId('pref-scale').addEventListener('input', function (e) { changed({ scale: Number(e.target.value) }, { lite: true }); });
+    byId('pref-opacity').addEventListener('input', function (e) { changed({ opacity: Number(e.target.value) }, { lite: true }); });
     byId('pref-auto-timesync').addEventListener('change', function (e) { changed({ autoTimeSync: e.target.checked }); });
     byId('shutdown-action').addEventListener('change', function (e) { changed({ timerAction: e.target.value }); });
-    byId('shutdown-mode').addEventListener('change', function (e) { changed({ timerMode: e.target.value }); });
+    byId('shutdown-mode').addEventListener('change', function (e) {
+      changed({ timerMode: e.target.value });
+      syncTimerModeUI();
+    });
 
     // analog penetration: 复用「指针穿透」开关（外观 Tab 之外也提供入口通过样式）
     // 采用独立控件注入到表盘配色行下方（避免再改 HTML）
@@ -858,7 +1159,7 @@
         var next = Math.min(2.5, Math.max(0.5, origin.scale + (dx + dy) / 2 / BASE_W * 2));
         next = Math.round(next * 20) / 20;
         if (Math.abs(next - (Number(state.scale) || 1)) < 0.001) return;
-        changed({ scale: next });
+        changed({ scale: next }, { lite: true });
       });
       function end(e) {
         if (!origin) return;
@@ -889,11 +1190,36 @@
     } catch (e) { /* ignore */ }
   }
 
+  // v0.5：隐藏原生下拉箭头 → 滚轮直接切换选项。
+  // 只绑定「选项型」下拉；文件选择/颜色等不涉及。点击仍可展开原生弹窗（可达性兼底），
+  // 但日常用滚轮即可，避免 WebView2 频繁弹原生下拉造成的卡顿。
+  function bindWheelSelects() {
+    var sels = document.querySelectorAll('.settings select.dc-select');
+    for (var i = 0; i < sels.length; i++) {
+      (function (sel) {
+        // 跳过会重建 DOM 的特殊下拉（切换时依赖 change 事件+opts.i18n 同步仍保留）
+        sel.addEventListener('wheel', function (e) {
+          e.preventDefault();
+          var n = sel.options.length;
+          if (n < 2) return;
+          var idx = sel.selectedIndex;
+          var dir = (e.deltaY || e.deltaX) > 0 ? 1 : -1;
+          var next = Math.min(n - 1, Math.max(0, idx + dir));
+          if (next === idx) return;
+          sel.selectedIndex = next;
+          // 触发标准 change 事件，所有现有监听器照常生效
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }, { passive: false });
+      })(sels[i]);
+    }
+  }
+
   function startEngine(animate) {
+    var secs = effectiveShowSeconds();
     engine = new Engine({
       onTick: onTick,
       now: displayNow,
-      showSeconds: state.showSeconds,
+      showSeconds: secs,
       hour12: state.hour12,
       animate: animate
     });
@@ -916,6 +1242,7 @@
     bindExtras();
     syncControls();
     syncAnalogPenetrateControls();
+    bindWheelSelects();   // v0.5：滚轮切换下拉
 
     if (!isSettingsWindow) {
       setWindowSize(state.scale);

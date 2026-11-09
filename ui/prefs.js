@@ -22,10 +22,11 @@
     clickThrough: false,       // v0.4: 鼠标穿透（点击穿透到下层窗口）
     alarms: [],                // [{time:"HH:MM", repeat:bool, id:string}]
     alarmSound: true,          // v0.4: 闹钟响铃
+    alarmTone: 'gentle',       // v0.5: gentle|bell|tick|rise|chord|custom
     timerAction: 'shutdown',   // v0.4: shutdown | reboot
     timerMode: 'duration',     // v0.4: duration | clock
     autoTimeSync: false,       // v0.4: 启动时自动校时
-    extraClocks: [],           // v0.4: [{id,label,offset}] 多时区窗口
+    extraClocks: [],           // v0.5: [{id,label,offset,style,showSeconds,visible}] 窗口管理器
     runAsAdmin: false,
     x: null,
     y: null
@@ -34,6 +35,8 @@
   var HEX = /^#[0-9a-fA-F]{6}$/;
   var FONTS = ['', 'sans', 'serif', 'mono', 'rounded', '__custom__'];
   var COLORS = ['', '__custom__'];
+  var TONES = ['gentle', 'bell', 'tick', 'rise', 'chord', 'custom'];
+  var CLOCK_STYLES = ['flip', 'minimal', 'neon', 'eink', 'segment', 'typewriter', 'glass', 'analog'];
   var STORAGE_KEY = 'deskclock.prefs';
   var isNative = !!window.__TAURI__;
   var SAVE_DEBOUNCE = 200;
@@ -77,6 +80,7 @@
     if (obj.analogTheme === 'dark' || obj.analogTheme === 'light') out.analogTheme = obj.analogTheme;
     if (obj.timerAction === 'shutdown' || obj.timerAction === 'reboot') out.timerAction = obj.timerAction;
     if (obj.timerMode === 'duration' || obj.timerMode === 'clock') out.timerMode = obj.timerMode;
+    if (TONES.indexOf(obj.alarmTone) >= 0) out.alarmTone = obj.alarmTone;
     if (Array.isArray(obj.alarms)) {
       out.alarms = obj.alarms.filter(function (a) {
         return a && typeof a.time === 'string' && /^\d{2}:\d{2}$/.test(a.time);
@@ -95,7 +99,11 @@
         return {
           id: String(c.id || ('c' + Math.random().toString(36).slice(2, 9))),
           label: c.label.slice(0, 16),
-          offset: Math.max(-720, Math.min(840, Math.round(Number(c.offset))))
+          offset: Math.max(-840, Math.min(840, Math.round(Number(c.offset)))),
+          // v0.5 管理器：每窗口独立样式/秒显示/可见性（空样式=跟随全局）
+          style: (typeof c.style === 'string' && CLOCK_STYLES.indexOf(c.style) >= 0) ? c.style : '',
+          showSeconds: c.showSeconds === undefined ? true : !!c.showSeconds,
+          visible: c.visible === undefined ? true : !!c.visible
         };
       });
     }
@@ -214,6 +222,28 @@
     });
   }
 
+  // ------------------------------------------------------ timeout helpers
+  // v0.5：权限 invoke 若因系统/插件异常永不 settle，前端必须自行恢复，
+  // 不能停留「正在检查…／正在请求授权…」。
+  function withTimeout(promise, ms, fallbackValue, rejectMessage) {
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        if (rejectMessage) reject(new Error(rejectMessage));
+        else resolve(fallbackValue);
+      }, ms);
+      Promise.resolve(promise).then(function (v) {
+        if (done) return;
+        done = true; clearTimeout(timer); resolve(v);
+      }).catch(function (e) {
+        if (done) return;
+        done = true; clearTimeout(timer); reject(e);
+      });
+    });
+  }
+
   function privilegeStatus() {
     if (!isNative) {
       return Promise.resolve({
@@ -221,10 +251,17 @@
         runAsAdmin: false, note: '浏览器预览模式：无系统权限，仅用于查看界面。'
       });
     }
-    return invoke('get_privilege_status').catch(function () {
-      return { platform: 'unknown', isElevated: false, canElevate: false,
-        runAsAdmin: false, note: '无法读取权限状态。' };
-    });
+    return withTimeout(invoke('get_privilege_status'), 4000, null, null)
+      .then(function (s) {
+        return s && typeof s === 'object' ? s : {
+          platform: 'unknown', isElevated: false, canElevate: false,
+          runAsAdmin: false, note: '无法读取权限状态。'
+        };
+      })
+      .catch(function () {
+        return { platform: 'unknown', isElevated: false, canElevate: false,
+          runAsAdmin: false, note: '无法读取权限状态。' };
+      });
   }
 
   function privilegeStatusFallback() {
@@ -234,12 +271,15 @@
 
   function setRunAsAdmin(enabled) {
     if (!isNative) return Promise.resolve(privilegeStatusFallback());
-    return invoke('set_run_as_admin', { enabled: !!enabled });
+    return withTimeout(invoke('set_run_as_admin', { enabled: !!enabled }), 8000,
+      null, '授权设置超时，请重试。');
   }
 
+  // v0.5：命令立即返回（Rust 后台线程等 UAC）；这里仍加超时兜底，
+  // 保证任何异常下按钮都能恢复，不会永远显示「正在请求授权…」。
   function restartElevated() {
     if (!isNative) return Promise.reject(new Error('浏览器模式不支持提权'));
-    return invoke('restart_elevated');
+    return withTimeout(invoke('restart_elevated'), 8000, null, '授权请求超时。');
   }
 
   function openSettings() {
@@ -272,8 +312,16 @@
         .then(function (d) { return { latest: d && d.tag_name ? String(d.tag_name) : '' }; });
     } catch (e) { return Promise.reject(e); }
   }
-  function addClockWindow(id, label, offset) { return invoke('add_clock_window', { id: id, label: label, offset: offset }); }
+  function addClockWindow(id, label, offset, style, showSeconds, visible) {
+    return invoke('add_clock_window', {
+      id: id, label: label, offset: offset,
+      style: style || '', showSeconds: !!showSeconds, visible: !!visible
+    });
+  }
   function closeClockWindow(id) { return invoke('close_clock_window', { id: id }); }
+  function setClockWindowVisible(id, visible) {
+    return invoke('set_clock_window_visible', { id: id, visible: !!visible });
+  }
   function listClockWindows() { return invoke('list_clock_windows'); }
 
   window.DeskClock.Prefs = {
@@ -302,6 +350,7 @@
     openUrl: openUrl,
     addClockWindow: addClockWindow,
     closeClockWindow: closeClockWindow,
+    setClockWindowVisible: setClockWindowVisible,
     listClockWindows: listClockWindows
   };
 })();

@@ -16,11 +16,9 @@
   <div id="settings" class="settings" hidden>
 
     <div class="settings-head">
-      <span class="brand"><span class="brand-dot"></span><span id="settings-title">设置</span><small id="ver-badge"></small></span>
+      <span class="brand"><span class="brand-dot"></span><span id="settings-title">设置</span><button id="ver-badge" class="ver-badge" type="button" title="点击打开项目主页"></button></span>
       <button id="settings-close" type="button" aria-label="关闭">&times;</button>
     </div>
-
-    <div id="tray-hint" class="tray-hint" hidden data-i18n="trayHint">本程序常驻系统托盘，不在任务栏显示；关闭窗口只会隐藏到托盘，托盘菜单可重新显示或退出。</div>
 
     <div class="settings-body">
       <nav class="settings-tabs" id="settings-tabs">
@@ -133,6 +131,8 @@
         <section class="panel" data-panel="window">
           <div class="card">
             <div class="card-title" data-i18n="grpWindow">窗口行为</div>
+            <!-- v0.5：托盘说明移入「窗口」Tab，不再悬浮在设置头部与外观 Tab 上沿重叠 -->
+            <div id="tray-hint" class="tray-hint" hidden data-i18n="trayHint">本程序常驻系统托盘，不在任务栏显示；关闭窗口只会隐藏到托盘，托盘菜单可重新显示或退出。</div>
             <label><span data-i18n="alwaysOnTop">总在最前</span>
               <input id="pref-ontop" type="checkbox" class="dc-switch">
             </label>
@@ -169,8 +169,24 @@
             <label><span data-i18n="alarmSound">响铃</span>
               <input id="pref-alarm-sound" type="checkbox" class="dc-switch">
             </label>
-            <div class="field-note" data-i18n="alarmSoundNote">到点播放提示音（浏览器需先有交互才允许出声）。</div>
-            <button id="alarm-test-sound" class="dc-btn ghost tiny" type="button" data-i18n="alarmTestSound">试听</button>
+            <label><span data-i18n="alarmTone">铃声</span>
+              <select id="pref-alarm-tone" class="dc-select">
+                <option value="gentle" data-i18n="toneGentle">柔和三连</option>
+                <option value="bell" data-i18n="toneBell">清脆叮咚</option>
+                <option value="tick" data-i18n="toneTick">电子滴答</option>
+                <option value="rise" data-i18n="toneRise">上升音阶</option>
+                <option value="chord" data-i18n="toneChord">和弦钟声</option>
+                <option value="custom" data-i18n="toneCustom">自定义音频…</option>
+              </select>
+            </label>
+            <div class="field-note" data-i18n="alarmToneNote">选择预设铃声，或使用自己的音频文件（≤ 500KB，仅保存在本机）。</div>
+            <div class="alarm-tone-row">
+              <button id="alarm-test-sound" class="dc-btn ghost tiny" type="button" data-i18n="alarmTestSound">试听</button>
+              <button id="alarm-custom-pick" class="dc-btn ghost tiny" type="button" data-i18n="alarmCustomPick">选择音频文件</button>
+              <button id="alarm-custom-clear" class="dc-btn ghost tiny" type="button" hidden data-i18n="alarmCustomClear">移除自定义</button>
+              <input id="alarm-custom-file" type="file" accept="audio/*" hidden>
+            </div>
+            <div id="alarm-custom-status" class="field-note" data-i18n="alarmCustomNone">未选择文件</div>
 
             <div class="alarm-editor">
               <div class="alarm-time">
@@ -203,15 +219,12 @@
                 <option value="clock" data-i18n="modeClock">指定时间点</option>
               </select>
             </label>
-            <div id="shutdown-duration-row" class="shutdown-editor">
+            <!-- v0.5：启动 / 取消按钮与输入框同一行 -->
+            <div class="shutdown-line">
               <input id="shutdown-min" type="number" min="1" max="1440" step="1" value="60" class="dc-input">
-              <span class="unit" data-i18n="minutes">分钟</span>
-            </div>
-            <div id="shutdown-clock-row" class="shutdown-editor" hidden>
-              <input id="shutdown-time" type="time" value="23:00" class="dc-input">
-              <span class="unit" data-i18n="clockHint">（当天或次日）</span>
-            </div>
-            <div class="shutdown-actions">
+              <input id="shutdown-time" type="time" value="23:00" class="dc-input" hidden>
+              <span id="shutdown-unit-min" class="unit" data-i18n="minutes">分钟</span>
+              <span id="shutdown-unit-clock" class="unit" data-i18n="clockHint" hidden>（当天或次日）</span>
               <button id="shutdown-start" class="dc-btn tiny" type="button" data-i18n="shutdownStart">启动</button>
               <button id="shutdown-cancel" class="dc-btn tiny danger" type="button" hidden data-i18n="shutdownCancel">取消</button>
             </div>
@@ -220,7 +233,7 @@
           </div>
         </section>
 
-        <!-- ============================ 时区与校时 ============================ -->
+        <!-- ==================== 时区校时 + 多时区窗口管理器 ==================== -->
         <section class="panel" data-panel="timezone">
           <div class="card">
             <div class="card-title" data-i18n="grpClockSync">系统时间校准</div>
@@ -236,14 +249,35 @@
           </div>
 
           <div class="card">
-            <div class="card-title" data-i18n="grpExtraClocks">多时区时钟</div>
-            <div class="field-note" data-i18n="extraClockNote">同一程序、单个实例下可打开多个独立时钟窗口，各自显示不同时区。</div>
-            <div class="extra-editor">
-              <input id="extra-label" type="text" class="dc-input" placeholder="名称，如 纽约" maxlength="16">
-              <select id="extra-zone" class="dc-select"></select>
-              <button id="extra-add" class="dc-btn tiny" type="button" data-i18n="extraAdd">＋ 打开窗口</button>
+            <div class="card-title" data-i18n="grpClockManager">多时区窗口管理器</div>
+            <div class="field-note" data-i18n="cmNote">可开启多个独立时钟窗口，每个窗口都能设置任意时区、样式与显示项；改动会立即重建该窗口。</div>
+            <div class="cm-editor">
+              <label class="cm-field"><span data-i18n="cmName">名称</span>
+                <input id="cm-name" type="text" class="dc-input" placeholder="如 纽约" maxlength="16">
+              </label>
+              <label class="cm-field"><span data-i18n="cmZone">时区</span>
+                <select id="cm-zone" class="dc-select"></select>
+              </label>
+              <label class="cm-field" id="cm-custom-row" hidden><span data-i18n="cmCustomZone">自定义 UTC 偏移</span>
+                <input id="cm-offset" type="text" class="dc-input" placeholder="+05:30" maxlength="7">
+              </label>
+              <div class="field-note" id="cm-offset-hint" data-i18n="cmOffsetHint" hidden>格式 ±HH:MM，如 +05:30 / -08:00</div>
+              <label class="cm-field"><span data-i18n="cmStyle">窗口样式</span>
+                <select id="cm-style" class="dc-select">
+                  <option value="" data-i18n="cmStyleGlobal">跟随全局（推荐）</option>
+                </select>
+              </label>
+              <label class="cm-field"><span data-i18n="cmShowSeconds">显示秒</span>
+                <input id="cm-seconds" type="checkbox" class="dc-switch">
+              </label>
+              <div class="cm-actions">
+                <button id="cm-add" class="dc-btn tiny" type="button" data-i18n="cmAdd">＋ 添加窗口</button>
+                <button id="cm-save" class="dc-btn tiny primary" type="button" hidden data-i18n="cmSave">保存修改</button>
+                <button id="cm-cancel" class="dc-btn tiny ghost" type="button" hidden data-i18n="cmCancel">取消编辑</button>
+              </div>
+              <div class="field-note" id="cm-edit-hint" data-i18n="cmEditHint" hidden>编辑后点「保存修改」重建窗口</div>
             </div>
-            <div id="extra-list" class="extra-list"></div>
+            <div id="cm-list" class="cm-list"></div>
           </div>
         </section>
 
@@ -253,10 +287,12 @@
             <div class="card-title" data-i18n="permTitle">权限与启动</div>
             <div id="perm-status" class="perm-status" data-i18n="permChecking">正在检查权限…</div>
             <div id="perm-note" class="perm-note"></div>
+            <button id="perm-retry" class="dc-btn tiny ghost" type="button" hidden data-i18n="permRetry">重新检查</button>
             <label id="perm-admin-row" class="perm-row" hidden><span data-i18n="permAdmin">始终以管理员身份启动</span>
               <input id="perm-run-admin" type="checkbox" class="dc-switch">
             </label>
             <div class="perm-note" data-i18n="permAdminNote">勾选后，下次手动启动以及开机自启都会自动向 Windows 请求管理员权限（UAC 提示由系统弹出）；取消勾选即恢复普通权限。</div>
+            <div class="perm-note" data-i18n="permElevateHint">点击后会弹出系统授权窗口；若取消或超时，本程序会继续以当前权限运行。</div>
             <button id="perm-elevate-now" class="dc-btn perm-btn" type="button" hidden data-i18n="permElevateNow">立即以管理员身份重启</button>
             <button id="perm-quit" class="dc-btn perm-btn danger" type="button" hidden data-i18n="permQuit">退出程序</button>
           </div>
@@ -266,7 +302,7 @@
         <section class="panel" data-panel="about">
           <div class="card">
             <div class="card-title" data-i18n="donateTitle">支持作者</div>
-            <div class="donate-note" data-i18n="donateNote">如果这个小工具有帮到你，欢迎请作者喝杯咖啡 ☕（完全自愿）</div>
+            <div class="donate-note" data-i18n="donateNote">如果这个小工具有帮到你，欢迎请作者喝杯咖啡 ☕</div>
             <button id="donate-toggle" class="dc-btn primary" type="button" data-i18n="donateToggle">请作者喝咖啡</button>
             <div id="donate-panel" class="donate-panel" hidden>
               <div class="donate-tabs">
@@ -274,7 +310,7 @@
                 <button type="button" class="donate-tab" data-donate="alipay" data-i18n="donateAlipay">支付宝</button>
               </div>
               <div class="donate-qr"><img id="donate-img" src="assets/donate-wechat.jpg" alt="收款码"></div>
-              <div class="donate-foot" data-i18n="donateFoot">截图 / 长按后扫码 · 感谢你的支持</div>
+              <div class="donate-foot" data-i18n="donateFoot">感谢您的支持</div>
             </div>
           </div>
 
@@ -286,12 +322,14 @@
               <a id="download-update" class="dc-btn tiny" hidden data-i18n="goDownload">下载新版本</a>
               <span id="update-status" class="field-note"></span>
             </div>
-            <div class="about-meta"><span>Desk Clock</span><span id="about-version"></span><span>MIT · 开源免费</span></div>
+            <div class="about-meta"><span>Desk Clock</span><button id="about-version" class="ver-badge" type="button" title="点击打开项目主页"></button><span>MIT · 开源免费</span></div>
           </div>
 
-          <div class="card">
-            <button id="reset-defaults" class="dc-btn reset" type="button" data-i18n="resetDefaults">一键还原默认（Alt+R）</button>
-            <button id="settings-close-2" class="dc-btn ghost" type="button" data-i18n="close">关闭</button>
+          <!-- v0.5：去掉多余的「关闭」按钮（头部 × 已可关闭），重排还原区 -->
+          <div class="card reset-card">
+            <div class="card-title">还原</div>
+            <button id="reset-defaults" class="dc-btn reset" type="button" data-i18n="resetDefaults">一键还原默认设置（Alt+R）</button>
+            <div class="field-note reset-note" data-i18n="resetNote">将样式、字体、颜色、窗口行为、闹钟与定时任务等全部恢复为初始值（语言与窗口位置保留）。</div>
           </div>
         </section>
 

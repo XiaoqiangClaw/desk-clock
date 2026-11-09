@@ -57,13 +57,15 @@ pub struct Prefs {
     pub alarms: Vec<serde_json::Value>,
     /// v0.4: play a chime when an alarm fires.
     pub alarm_sound: bool,
+    /// v0.5: alarm ring tone id (gentle|bell|tick|rise|chord|custom).
+    pub alarm_tone: String,
     /// v0.4: "shutdown" | "reboot".
     pub timer_action: String,
     /// v0.4: "duration" | "clock".
     pub timer_mode: String,
     /// v0.4: request OS time sync at startup.
     pub auto_time_sync: bool,
-    /// v0.4: extra timezone windows [{id,label,offsetMinutes}].
+    /// v0.4/v0.5: extra timezone windows [{id,label,offsetMinutes,style?,showSeconds?,visible?}].
     pub extra_clocks: Vec<serde_json::Value>,
     /// Windows only: request an elevated (administrator) process on every
     /// future launch, including autostart (RUNASADMIN compatibility layer).
@@ -95,6 +97,7 @@ impl Default for Prefs {
             click_through: false,
             alarms: Vec::new(),
             alarm_sound: true,
+            alarm_tone: "gentle".into(),
             timer_action: "shutdown".into(),
             timer_mode: "duration".into(),
             auto_time_sync: false,
@@ -240,8 +243,12 @@ fn set_admin_compat(_enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Ask Windows for an elevated copy, then terminate this one. Only exit THIS
-/// process on success, so a cancelled UAC prompt never leaves no clock behind.
+/// Ask Windows for an elevated copy, then terminate this one.
+///
+/// 🔴 v0.5 修复（权限界面卡死）：旧实现在同步 Tauri 命令里 `child.wait()`
+/// 等 UAC 用户点击，前端 invoke 会一直 pending，按钮永远显示「正在请求授权…」。
+/// 现在：spawn 后立刻返回，另起后台线程等结果；只有提权真正成功才退出本进程，
+/// 取消/超时都保持当前时钟继续运行。命令本身不再阻塞 IPC。
 #[cfg(target_os = "windows")]
 fn restart_elevated_now(app: &AppHandle) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -250,6 +257,10 @@ fn restart_elevated_now(app: &AppHandle) -> Result<(), String> {
         "try {{ Start-Process -FilePath '{}' -Verb RunAs -WindowStyle Normal -ErrorAction Stop }} catch {{ exit 1 }}",
         path
     );
+    // 🔴 单实例插件会持有 Windows 命名互斥锁；不先释放，新起的提权进程会被
+    // 当成「第二个实例」直接退出，提权永远不会生效。签名见
+    // tauri-plugin-single-instance::destroy<R: Runtime, M: Manager<R>>(&M)。
+    tauri_plugin_single_instance::destroy(app);
     let mut child = Command::new("powershell")
         .args([
             "-NoProfile",
@@ -260,12 +271,16 @@ fn restart_elevated_now(app: &AppHandle) -> Result<(), String> {
         ])
         .spawn()
         .map_err(|e| e.to_string())?;
-    if child.wait().map_err(|e| e.to_string())?.success() {
-        app.exit(0);
-        Ok(())
-    } else {
-        Err("已取消授权，当前时钟继续运行。".into())
-    }
+    // 后台线程等待 UAC 结果；成功才退出当前进程。绝不阻塞命令返回。
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+        if ok {
+            handle.exit(0);
+        }
+        // 取消授权：什么都不做，当前时钟照常运行；前端会自行恢复按钮状态。
+    });
+    Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -535,20 +550,30 @@ fn take_donate_intent() -> bool {
 
 // ------------------------------------------------------ extra clock windows
 
-/// Build ONE extra timezone clock window. All clocks share the same process
-/// and the same prefs; only their injected wall-clock offset differs.
-fn spawn_extra_window(app: &AppHandle, id: &str, label: &str, offset: f64) -> Result<(), String> {
+/// Build ONE extra timezone clock window. Each window gets its own injected
+/// offset AND (v0.5 manager) its own style / showSeconds override; everything
+/// else (font, colour, scale…) still follows the shared global prefs.
+fn spawn_extra_window(
+    app: &AppHandle,
+    id: &str,
+    label: &str,
+    offset: f64,
+    style: Option<&str>,
+    show_seconds: bool,
+    visible: bool,
+) -> Result<(), String> {
     let win_label = format!("clock-{}", id);
     if app.get_webview_window(&win_label).is_some() {
         return Ok(());
     }
-    // JSON-encode label/offset so quotes and unicode can never break the
-    // injected script. Rust resolves the values; the frontend only supplies ids.
+    // JSON-encode every injected value so quotes/unicode can never break the
+    // script. Rust resolves the values; the frontend only supplies ids.
     let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".into());
     let offset_json = serde_json::to_string(&offset).unwrap_or_else(|_| "0".into());
+    let style_json = serde_json::to_string(&style.unwrap_or("")).unwrap_or_else(|_| "\"\"".into());
     let init = format!(
-        "window.__DC_EXTRA__=1;window.__DC_TZ_OFFSET__={};window.__DC_TZ_LABEL__={};",
-        offset_json, label_json
+        "window.__DC_EXTRA__=1;window.__DC_TZ_OFFSET__={};window.__DC_TZ_LABEL__={};window.__DC_STYLE__={};window.__DC_SHOW_SECONDS__={};",
+        offset_json, label_json, style_json, show_seconds
     );
     tauri::WebviewWindowBuilder::new(
         app,
@@ -565,20 +590,71 @@ fn spawn_extra_window(app: &AppHandle, id: &str, label: &str, offset: f64) -> Re
     .skip_taskbar(true)
     .always_on_top(true)
     .center()
+    .visible(visible)
     .initialization_script(init.as_str())
     .build()
     .map_err(|e| e.to_string())?;
     Ok(())
 }
 
+/// v0.5 manager: create / re-create a clock window with its own settings.
+/// Editing an existing id destroys the old window first so the new style and
+/// visibility take effect immediately.
 #[tauri::command]
-fn add_clock_window(app: AppHandle, id: String, label: String, offset: f64) -> Result<(), String> {
+fn add_clock_window(
+    app: AppHandle,
+    id: String,
+    label: String,
+    offset: f64,
+    style: Option<String>,
+    show_seconds: Option<bool>,
+    visible: Option<bool>,
+) -> Result<(), String> {
     // Sanitise the id: it becomes part of a window label. Keep it alnum only.
     let clean: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if clean.is_empty() {
         return Err("invalid clock id".into());
     }
-    spawn_extra_window(&app, &clean, &label, offset.clamp(-720.0, 840.0))
+    let win_label = format!("clock-{}", clean);
+    if let Some(win) = app.get_webview_window(&win_label) {
+        win.destroy().map_err(|e| e.to_string())?;
+    }
+    let st = style.filter(|s| !s.is_empty());
+    spawn_extra_window(
+        &app,
+        &clean,
+        &label,
+        offset.clamp(-840.0, 840.0),
+        st.as_deref(),
+        show_seconds.unwrap_or(true),
+        visible.unwrap_or(true),
+    )
+}
+
+/// v0.5 manager: hide/show a clock window without destroying its config.
+#[tauri::command]
+fn set_clock_window_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
+    let clean: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let win_label = format!("clock-{}", clean);
+    let win = app.get_webview_window(&win_label);
+    if let Some(win) = win {
+        if visible { win.show().map_err(|e| e.to_string())?; }
+        else { win.hide().map_err(|e| e.to_string())?; }
+        return Ok(());
+    }
+    if !visible { return Ok(()); }
+    // Window doesn't exist yet (hidden at startup): rebuild it from prefs.
+    let prefs = read_prefs(&app);
+    for v in prefs.extra_clocks.iter() {
+        let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        if vid != clean { continue; }
+        let lbl = v.get("label").and_then(|x| x.as_str()).unwrap_or("");
+        let off = v.get("offset").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let st = v.get("style").and_then(|x| x.as_str()).filter(|s| !s.is_empty());
+        let secs = v.get("showSeconds").and_then(|x| x.as_bool()).unwrap_or(true);
+        return spawn_extra_window(&app, &clean, lbl, off, st, secs, true);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -900,14 +976,17 @@ fn restore_position(win: &WebviewWindow, prefs: &Prefs) {
 /// Restore extra timezone windows from prefs on startup. Runs on a worker
 /// thread with a small delay to avoid the WebView2 synchronous-build deadlock.
 fn restore_extra_windows(app: AppHandle, prefs: &Prefs) {
-    let items: Vec<(String, String, f64)> = prefs
+    let items: Vec<(String, String, f64, Option<String>, bool, bool)> = prefs
         .extra_clocks
         .iter()
         .filter_map(|v| {
             let id = v.get("id")?.as_str()?.to_string();
             let label = v.get("label")?.as_str()?.to_string();
-            let offset = v.get("offset")?.as_f64()?;
-            Some((id, label, offset))
+            let offset = v.get("offset").and_then(|x| x.as_f64())?;
+            let style = v.get("style").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+            let show_seconds = v.get("showSeconds").and_then(|x| x.as_bool()).unwrap_or(true);
+            let visible = v.get("visible").and_then(|x| x.as_bool()).unwrap_or(true);
+            Some((id, label, offset, style, show_seconds, visible))
         })
         .collect();
     if items.is_empty() {
@@ -915,12 +994,12 @@ fn restore_extra_windows(app: AppHandle, prefs: &Prefs) {
     }
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(600));
-        for (id, label, offset) in items {
+        for (id, label, offset, style, secs, vis) in items {
             let clean: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
             if clean.is_empty() {
                 continue;
             }
-            let _ = spawn_extra_window(&app, &clean, &label, offset);
+            let _ = spawn_extra_window(&app, &clean, &label, offset, style.as_deref(), secs, vis);
         }
     });
 }
@@ -1041,6 +1120,7 @@ pub fn run() {
             take_donate_intent,
             add_clock_window,
             close_clock_window,
+            set_clock_window_visible,
             list_clock_windows,
             open_link,
             sync_system_time,
