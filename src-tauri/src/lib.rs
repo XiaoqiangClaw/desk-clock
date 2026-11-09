@@ -199,15 +199,19 @@ fn set_admin_compat(_enabled: bool) -> Result<(), String> {
 /// is launched by ShellExecute with the "runas" verb, which shows the standard
 /// UAC consent dialog. We deliberately NEVER auto-elevate from `setup()`: the
 /// compatibility layer already handles future launches, so there is no loop.
+///
+/// `Start-Process` throws when the user cancels the UAC prompt; we make that a
+/// non-zero exit with `-ErrorAction Stop` and only exit THIS process on success,
+/// so a cancelled prompt never leaves the user without a clock.
 #[cfg(target_os = "windows")]
 fn restart_elevated_now(app: &AppHandle) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let path = exe.to_string_lossy().replace('\'', "''");
     let script = format!(
-        "Start-Process -FilePath '{}' -Verb RunAs -WindowStyle Normal",
+        "try {{ Start-Process -FilePath '{}' -Verb RunAs -WindowStyle Normal -ErrorAction Stop }} catch {{ exit 1 }}",
         path
     );
-    Command::new("powershell")
+    let mut child = Command::new("powershell")
         .args([
             "-NoProfile",
             "-WindowStyle",
@@ -217,8 +221,12 @@ fn restart_elevated_now(app: &AppHandle) -> Result<(), String> {
         ])
         .spawn()
         .map_err(|e| e.to_string())?;
-    app.exit(0);
-    Ok(())
+    if child.wait().map_err(|e| e.to_string())?.success() {
+        app.exit(0);
+        Ok(())
+    } else {
+        Err("已取消授权，当前时钟继续运行。".into())
+    }
 }
 
 #[cfg(not(target_os = "windows"))]

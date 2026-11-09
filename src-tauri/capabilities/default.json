@@ -1,12 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the clock and settings windows (window mutations are done in Rust commands)",
+  "description": "Permissions for the clock and settings windows. Autostart, tray, window mutations and preference writes are all Rust commands (no plugin JS permissions needed).",
   "windows": ["main", "settings"],
   "permissions": [
-    "core:default",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "core:default"
   ]
 }
