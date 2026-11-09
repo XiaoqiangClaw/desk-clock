@@ -507,9 +507,12 @@ fn ensure_settings_window(app: &AppHandle) -> Result<(), String> {
         WebviewUrl::App(PathBuf::from("index.html")),
     )
     .title("Desk Clock · 设置")
-    .inner_size(560.0, 640.0)
-    .min_inner_size(460.0, 480.0)
-    .resizable(true)
+    // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
+    // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
+    .inner_size(760.0, 700.0)
+    .min_inner_size(760.0, 700.0)
+    .max_inner_size(760.0, 700.0)
+    .resizable(false)
     .decorations(true)
     .transparent(false)
     .skip_taskbar(false)
@@ -575,7 +578,17 @@ fn spawn_extra_window(
         "window.__DC_EXTRA__=1;window.__DC_TZ_OFFSET__={};window.__DC_TZ_LABEL__={};window.__DC_STYLE__={};window.__DC_SHOW_SECONDS__={};",
         offset_json, label_json, style_json, show_seconds
     );
-    tauri::WebviewWindowBuilder::new(
+    let count = app
+        .webview_windows()
+        .keys()
+        .filter(|k| k.starts_with("clock-"))
+        .count() as f64;
+    // 🔴 v0.5.1：新窗口错开位置，否则全部 .center() 完全重叠、看起来像没显示。
+    let x = 160.0 + (count % 6.0) * 46.0;
+    let y = 140.0 + (count % 6.0) * 40.0;
+    // v0.5.1：不再强制置顶，跟随用户的「总在最前」全局设置。
+    let on_top = read_prefs(app).always_on_top;
+    let win = tauri::WebviewWindowBuilder::new(
         app,
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
@@ -588,20 +601,27 @@ fn spawn_extra_window(
     .transparent(true)
     .shadow(false)
     .skip_taskbar(true)
-    .always_on_top(true)
-    .center()
+    .always_on_top(on_top)
+    .position(x, y)
     .visible(visible)
     .initialization_script(init.as_str())
     .build()
     .map_err(|e| e.to_string())?;
+    // 🔴 v0.5.1 关键修复：透明无边框窗口的「透明区域」默认仍接收鼠标事件，
+    // 又置顶 → 会盖住并拦截其它应用窗口的按钮点击。额外时钟窗口没有任何
+    // 交互元素（齿轮/缩放柄/设置都隐藏），直接让鼠标穿透即可，
+    // 这样既显示时钟，又完全不影响其它程序。
+    let _ = win.set_ignore_cursor_events(true);
     Ok(())
 }
 
-/// v0.5 manager: create / re-create a clock window with its own settings.
-/// Editing an existing id destroys the old window first so the new style and
-/// visibility take effect immediately.
+/// v0.5.1：窗口创建放到后台线程执行。
+/// 同步 Tauri 命令里直接 `WebviewWindowBuilder::build()` 在 Windows WebView2
+/// 上会与主线程互锁（本项目 ensure_settings_window 已有同样规避），
+/// 表现为「点了添加但窗口不出现 / 整个程序卡顿」。命令立即返回，
+/// 真正建窗在独立线程完成。
 #[tauri::command]
-fn add_clock_window(
+async fn add_clock_window(
     app: AppHandle,
     id: String,
     label: String,
@@ -620,26 +640,36 @@ fn add_clock_window(
         win.destroy().map_err(|e| e.to_string())?;
     }
     let st = style.filter(|s| !s.is_empty());
-    spawn_extra_window(
-        &app,
-        &clean,
-        &label,
-        offset.clamp(-840.0, 840.0),
-        st.as_deref(),
-        show_seconds.unwrap_or(true),
-        visible.unwrap_or(true),
-    )
+    let off = offset.clamp(-840.0, 840.0);
+    let secs = show_seconds.unwrap_or(true);
+    let vis = visible.unwrap_or(true);
+    let lbl = label.clone();
+    std::thread::spawn(move || {
+        let _ = spawn_extra_window(
+            &app,
+            &clean,
+            &lbl,
+            off,
+            st.as_deref(),
+            secs,
+            vis,
+        );
+    });
+    Ok(())
 }
 
-/// v0.5 manager: hide/show a clock window without destroying its config.
+/// v0.5.1：隐藏后重新显示时同样用后台线程建窗，避免同步 build 死锁。
 #[tauri::command]
-fn set_clock_window_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
+async fn set_clock_window_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
     let clean: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let win_label = format!("clock-{}", clean);
     let win = app.get_webview_window(&win_label);
     if let Some(win) = win {
         if visible { win.show().map_err(|e| e.to_string())?; }
         else { win.hide().map_err(|e| e.to_string())?; }
+        // v0.5.1：Tauri 的 hide() 不会让 document.hidden 变 true，
+        // 隐藏的窗口仍会每秒 tick 而白耗资源。显式通知该窗口停/复表。
+        let _ = app.emit_to(win_label.as_str(), "clock-visibility", visible);
         return Ok(());
     }
     if !visible { return Ok(()); }
@@ -648,11 +678,15 @@ fn set_clock_window_visible(app: AppHandle, id: String, visible: bool) -> Result
     for v in prefs.extra_clocks.iter() {
         let vid = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
         if vid != clean { continue; }
-        let lbl = v.get("label").and_then(|x| x.as_str()).unwrap_or("");
+        let lbl = v.get("label").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let off = v.get("offset").and_then(|x| x.as_f64()).unwrap_or(0.0);
-        let st = v.get("style").and_then(|x| x.as_str()).filter(|s| !s.is_empty());
+        let st = v.get("style").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string());
         let secs = v.get("showSeconds").and_then(|x| x.as_bool()).unwrap_or(true);
-        return spawn_extra_window(&app, &clean, lbl, off, st, secs, true);
+        let id2 = clean.clone();
+        std::thread::spawn(move || {
+            let _ = spawn_extra_window(&app, &id2, &lbl, off, st.as_deref(), secs, true);
+        });
+        return Ok(());
     }
     Ok(())
 }

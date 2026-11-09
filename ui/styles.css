@@ -425,13 +425,14 @@ button.perm-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* ============================ v0.3 dual-view ============================ */
 /* 独立设置窗口：铺满、绝不被时钟的 opacity/scale 影响（关键 bug 修复） */
-body[data-view="settings"] { background: #14161b; overflow: auto; }
+/* v0.5.1：固定尺寸窗口 —— 内容不撑高窗口，只在右侧面板内滚轮滚动。
+   滚动条隐藏（用户要求「不显示下拉框」），但所有内容都能滚到、不会截断。 */
+body[data-view="settings"] { background: #14161b; overflow: hidden; height: 100vh; }
 body[data-view="settings"] #app {
-  display: block; width: 100%; min-height: 100vh; height: auto;
+  display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0;
   padding: 0; background: #14161b; cursor: default;
   -webkit-app-region: no-drag; font-size: 13px;
-  opacity: 1 !important;              /* 设置窗口永远不透明 */
-  --dc-scale: 1;
+  opacity: 1 !important; --dc-scale: 1;
 }
 body[data-view="settings"] #clock,
 body[data-view="settings"] #gear,
@@ -439,21 +440,28 @@ body[data-view="settings"] #resize-handle,
 body[data-view="settings"] #tray-menu-btn,
 body[data-view="settings"] #alarm-toast { display: none !important; }
 body[data-view="settings"] #settings {
-  position: static; display: block; width: 100%; max-height: none;
-  margin: 0; padding: 0; border: 0; border-radius: 0;
+  position: static; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+  width: 100%; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0;
   background: transparent; box-shadow: none; backdrop-filter: none;
-  overflow: visible; font-size: 13px; opacity: 1 !important;
+  overflow: hidden; font-size: 13px; opacity: 1 !important;
 }
-body[data-view="settings"] .settings-head { padding: 14px 20px; background: #1b1d23; border-bottom: 1px solid var(--s-line); position: sticky; top: 0; z-index: 10; }
+body[data-view="settings"] .settings-head { padding: 14px 20px; background: #1b1d23; border-bottom: 1px solid var(--s-line); flex: 0 0 auto; z-index: 10; }
 body[data-view="settings"] .settings-head .brand { font-size: 15px; }
 /* 独立设置窗口用系统标题栏的 × 关闭；只隐藏嵌入式面板的关闭按钮，
    千万不要隐藏 .ver-badge（版本号需要可点击）。 */
 body[data-view="settings"] .settings-head #settings-close { display: none; }
 body[data-view="settings"] .tray-hint { max-width: none; margin: 14px 20px 0; }
-body[data-view="settings"] .settings-body { align-items: flex-start; min-height: calc(100vh - 52px); }
-body[data-view="settings"] .settings-tabs { display: flex; flex: 0 0 150px; padding: 16px 10px; border-right: 1px solid var(--s-line); background: #191b21; }
+body[data-view="settings"] .settings-body { align-items: stretch; flex: 1 1 auto; min-height: 0; }
+body[data-view="settings"] .settings-tabs { display: flex; flex: 0 0 150px; padding: 16px 10px; border-right: 1px solid var(--s-line); background: #191b21; overflow-y: auto; scrollbar-width: none; }
+body[data-view="settings"] .settings-tabs::-webkit-scrollbar { display: none; }
 body[data-view="settings"] .tab { padding: 10px 12px; font-size: 13px; }
-body[data-view="settings"] .settings-panels { padding: 20px 24px 40px; max-height: none; overflow: visible; max-width: 720px; }
+/* 只有这一块滚动；滚动条隐藏，滚轮/触控板正常。 */
+body[data-view="settings"] .settings-panels {
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  padding: 20px 24px 40px; max-height: none; max-width: none;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: none; -ms-overflow-style: none;
+}
+body[data-view="settings"] .settings-panels::-webkit-scrollbar { width: 0; height: 0; display: none; }
 body[data-view="settings"] .card { padding: 16px 18px; margin-bottom: 14px; }
 body[data-view="settings"] .dc-select,
 body[data-view="settings"] .dc-input,
@@ -468,8 +476,7 @@ body[data-view="settings"] .cm-list { scrollbar-width: none; -ms-overflow-style:
 body[data-view="settings"] .settings-panels::-webkit-scrollbar,
 body[data-view="settings"] .alarm-list::-webkit-scrollbar,
 body[data-view="settings"] .cm-list::-webkit-scrollbar { width: 0; height: 0; display: none; }
-body[data-view="settings"] .settings-panels:focus-visible::-webkit-scrollbar,
-body[data-view="settings"] .alarm-list:focus-visible::-webkit-scrollbar,
-body[data-view="settings"] .cm-list:focus-visible::-webkit-scrollbar { display: block; width: 8px; }
+/* 键盘可达性：隐藏滚动条时用细焦点描边代替，不把滚动条再显示出来。 */
+body[data-view="settings"] .settings-panels:focus-visible { outline: 1px solid var(--s-accent); outline-offset: -2px; }
 #tray-menu-btn { position: absolute; top: 4px; right: 34px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: rgba(255,255,255,.09); color: rgba(255,255,255,.78); font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .2s ease; z-index: 40; -webkit-app-region: no-drag; }
 #app:hover #tray-menu-btn, #tray-menu-btn:focus-visible { opacity: .9; }

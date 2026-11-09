@@ -27,6 +27,7 @@
         <button type="button" class="tab" data-tab="alarm"><i>⏰</i><span data-i18n="tabAlarm">闹钟</span></button>
         <button type="button" class="tab" data-tab="timer"><i>⏲</i><span data-i18n="tabTimer">定时任务</span></button>
         <button type="button" class="tab" data-tab="timezone"><i>🌐</i><span data-i18n="tabTimezone">时区校时</span></button>
+        <button type="button" class="tab" data-tab="clocks"><i>🗔</i><span data-i18n="tabClocks">多时区</span></button>
         <button type="button" class="tab" data-tab="permission"><i>⛨</i><span data-i18n="tabPermission">权限</span></button>
         <button type="button" class="tab" data-tab="about"><i>☕</i><span data-i18n="tabAbout">关于</span></button>
       </nav>
@@ -186,7 +187,7 @@
               <button id="alarm-custom-clear" class="dc-btn ghost tiny" type="button" hidden data-i18n="alarmCustomClear">移除自定义</button>
               <input id="alarm-custom-file" type="file" accept="audio/*" hidden>
             </div>
-            <div id="alarm-custom-status" class="field-note" data-i18n="alarmCustomNone">未选择文件</div>
+            <div id="alarm-custom-status" class="field-note" data-dyn>未选择文件</div>
 
             <div class="alarm-editor">
               <div class="alarm-time">
@@ -228,12 +229,12 @@
               <button id="shutdown-start" class="dc-btn tiny" type="button" data-i18n="shutdownStart">启动</button>
               <button id="shutdown-cancel" class="dc-btn tiny danger" type="button" hidden data-i18n="shutdownCancel">取消</button>
             </div>
-            <div id="shutdown-status" class="shutdown-status" data-i18n="shutdownOff">未启用</div>
+            <div id="shutdown-status" class="shutdown-status" data-dyn>未启用</div>
             <div class="shutdown-warn" data-i18n="shutdownWarn">到点将执行系统动作，请先保存工作；可随时取消。</div>
           </div>
         </section>
 
-        <!-- ==================== 时区校时 + 多时区窗口管理器 ==================== -->
+        <!-- ==================== 时区校时 ==================== -->
         <section class="panel" data-panel="timezone">
           <div class="card">
             <div class="card-title" data-i18n="grpClockSync">系统时间校准</div>
@@ -241,13 +242,16 @@
               <span id="sync-clock" class="sync-clock">--:--:--</span>
               <button id="sync-now" class="dc-btn tiny" type="button" data-i18n="syncNow">立即校时</button>
             </div>
-            <div id="sync-status" class="field-note" data-i18n="syncIntro">若电脑时间不准，可让系统联网校准（需要管理员 / root 权限）。</div>
+            <div id="sync-status" class="field-note" data-dyn>若电脑时间不准，可让系统联网校准（需要管理员 / root 权限）。</div>
             <label><span data-i18n="autoTimeSync">启动时自动校时</span>
               <input id="pref-auto-timesync" type="checkbox" class="dc-switch">
             </label>
             <div class="field-note" data-i18n="syncNote">校时调用操作系统自带的时间服务，不会修改本程序之外的任何数据。</div>
           </div>
+        </section>
 
+        <!-- ==================== 多时区窗口管理器（独立页） ==================== -->
+        <section class="panel" data-panel="clocks">
           <div class="card">
             <div class="card-title" data-i18n="grpClockManager">多时区窗口管理器</div>
             <div class="field-note" data-i18n="cmNote">可开启多个独立时钟窗口，每个窗口都能设置任意时区、样式与显示项；改动会立即重建该窗口。</div>
@@ -285,7 +289,7 @@
         <section class="panel" data-panel="permission">
           <div class="card">
             <div class="card-title" data-i18n="permTitle">权限与启动</div>
-            <div id="perm-status" class="perm-status" data-i18n="permChecking">正在检查权限…</div>
+            <div id="perm-status" class="perm-status" data-dyn>正在检查权限…</div>
             <div id="perm-note" class="perm-note"></div>
             <button id="perm-retry" class="dc-btn tiny ghost" type="button" hidden data-i18n="permRetry">重新检查</button>
             <label id="perm-admin-row" class="perm-row" hidden><span data-i18n="permAdmin">始终以管理员身份启动</span>
@@ -320,7 +324,7 @@
             <div class="update-row">
               <button id="check-update" class="dc-btn tiny" type="button" data-i18n="checkUpdate">检查更新</button>
               <a id="download-update" class="dc-btn tiny" hidden data-i18n="goDownload">下载新版本</a>
-              <span id="update-status" class="field-note"></span>
+              <span id="update-status" class="field-note" data-dyn></span>
             </div>
             <div class="about-meta"><span>Desk Clock</span><button id="about-version" class="ver-badge" type="button" title="点击打开项目主页"></button><span>MIT · 开源免费</span></div>
           </div>

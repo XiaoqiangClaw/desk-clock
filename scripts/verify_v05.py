@@ -240,7 +240,10 @@ with sync_playwright() as pw:
               (ib["y"], bb["y"]))
 
     # 5) manager: arbitrary offset, per-window style, edit/hide/delete
-    gototab(page, "timezone")
+    gototab(page, "clocks")
+    check("manager is its own settings page",
+          page.locator('#settings-tabs .tab[data-tab="clocks"]').count() == 1
+          and page.locator('[data-panel="clocks"] #cm-list').count() == 1)
     check("manager present", page.locator("#cm-list").count() == 1)
     check("manager zone count >= 20", page.locator("#cm-zone option").count() >= 20,
           page.locator("#cm-zone option").count())
@@ -304,6 +307,57 @@ with sync_playwright() as pw:
     check("privilege status text is failure, not checking",
           "正在检查" not in p2.locator("#perm-status").inner_text(),
           p2.locator("#perm-status").inner_text())
+
+    # ===================== v0.5.1 regression batch =====================
+    # a) 权限状态不再被 I18n.apply 覆盖回「正在检查权限…」
+    gototab(page, "permission")
+    settled = page.locator("#perm-status").inner_text()
+    check("perm status settled text captured", "正在检查" not in settled, settled)
+    # 触发一次完整 applyRoot（改语言→i18n.apply），状态框必须保持真实内容
+    before = settled
+    page.evaluate("window.DeskClock.I18n.apply('zh-CN')")
+    page.wait_for_timeout(120)
+    after = page.locator("#perm-status").inner_text()
+    check("I18n.apply no longer resets live permission status",
+          after == before, (before, after))
+    # 其它动态状态同理
+    check("dynamic status nodes marked data-dyn",
+          page.locator('[data-dyn]').count() >= 5,
+          page.locator('[data-dyn]').count())
+
+    # b) 管理器独立页 + 「删除」按钮文案
+    gototab(page, "clocks")
+    check("manager is a dedicated tab",
+          page.locator('#settings-tabs .tab[data-tab="clocks"]').count() == 1
+          and page.locator('[data-panel="clocks"] #cm-list').count() == 1)
+    check("timezone tab no longer contains manager",
+          page.locator('[data-panel="timezone"] #cm-list').count() == 0)
+    # 造一条，检查危险按钮写「删除」而非「关闭」
+    page.locator("#cm-name").fill("校验")
+    page.locator("#cm-zone").select_option("0")
+    page.locator("#cm-add").click()
+    page.wait_for_timeout(200)
+    del_txt = page.locator("#cm-list .cm-row button.danger").first.inner_text()
+    check("manager destructive button says 删除", "删除" in del_txt and "关闭" not in del_txt, del_txt)
+
+    # c) 固定尺寸：窗口不可缩放由 Rust 保证；这里验证内部滚动容器 + 隐藏滚动条
+    panels = page.locator("#settings-panels")
+    check("settings panels is the scroll container",
+          panels.evaluate("e=>getComputedStyle(e).overflowY") == "auto")
+    check("settings scrollbars hidden",
+          panels.evaluate("e=>getComputedStyle(e).scrollbarWidth") == "none")
+    # 每个 Tab 的内容都能滚到底，不截断
+    all_reachable = True
+    for t in page.locator("#settings-tabs .tab").all():
+        t.click(); page.wait_for_timeout(80)
+        panels.evaluate("e=>e.scrollTop=e.scrollHeight")
+        page.wait_for_timeout(50)
+        sh = panels.evaluate("e=>e.scrollHeight")
+        ch = panels.evaluate("e=>e.clientHeight")
+        st = panels.evaluate("e=>e.scrollTop")
+        if sh > ch and st < sh - ch - 2:
+            all_reachable = False
+    check("every tab's content reachable in fixed-size window", all_reachable)
 
     check("no JS errors across v0.5 run", not errors, errors[:5])
     browser.close()

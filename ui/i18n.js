@@ -13,7 +13,7 @@
       gearTitle: '设置', settingsTitle: '设置', resizeTitle: '拖动调整大小',
       // tabs
       tabAppearance: '外观', tabWindow: '窗口', tabAlarm: '闹钟',
-      tabTimer: '定时任务', tabTimezone: '时区校时', tabPermission: '权限', tabAbout: '关于',
+      tabTimer: '定时任务', tabTimezone: '时区校时', tabClocks: '多时区', tabPermission: '权限', tabAbout: '关于',
       grpBasic: '基础显示', grpTypography: '字体与配色', grpCanvas: '画布',
       grpWindow: '窗口行为', grpPosition: '快速定位', grpClockSync: '系统时间校准',
       grpExtraClocks: '多时区时钟', grpProject: '项目与更新',
@@ -45,11 +45,11 @@
       syncUnsupported: '此环境不支持自动校时',
       syncOk: '已请求系统校时', syncFail: '校时失败（可能需要管理员权限）：%s',
       grpClockManager: '多时区窗口管理器',
-      cmNote: '可开启多个独立时钟窗口，每个窗口都能设置任意时区、样式与显示项；改动会立即重建该窗口。',
+      cmNote: '可开启多个独立时钟窗口，每个都能设置任意时区、样式与显示项；新窗口会自动错开位置，且不会遮挡或拦截其它应用的点击。',
       cmName: '名称', cmZone: '时区', cmCustomZone: '自定义 UTC 偏移', cmOffsetHint: '格式 ±HH:MM，如 +05:30 / -08:00',
       cmStyle: '窗口样式', cmStyleGlobal: '跟随全局（推荐）', cmShowSeconds: '显示秒',
       cmAdd: '＋ 添加窗口', cmEmpty: '还没有时钟窗口，先在上方添加一个吧',
-      cmEdit: '编辑', cmHide: '隐藏', cmShow: '显示', cmDelete: '关闭',
+      cmEdit: '编辑', cmHide: '隐藏', cmShow: '显示', cmDelete: '删除',
       cmRunning: '运行中', cmStopped: '已隐藏', cmEditHint: '编辑后点「保存修改」重建窗口', cmSave: '保存修改', cmCancel: '取消编辑',
       extraBrowserOnly: '（浏览器预览：仅记录配置，不创建窗口）',
       // permissions
@@ -95,7 +95,7 @@
       showSeparator: 'Show ":"', close: 'Close', resizeTip: 'Or drag the bottom-right corner',
       gearTitle: 'Settings', settingsTitle: 'Settings', resizeTitle: 'Drag to resize',
       tabAppearance: 'Appearance', tabWindow: 'Window', tabAlarm: 'Alarm',
-      tabTimer: 'Timer', tabTimezone: 'Time', tabPermission: 'Permissions', tabAbout: 'About',
+      tabTimer: 'Timer', tabTimezone: 'Time', tabClocks: 'World clocks', tabPermission: 'Permissions', tabAbout: 'About',
       grpBasic: 'Display', grpTypography: 'Font & colour', grpCanvas: 'Canvas',
       grpWindow: 'Window behaviour', grpPosition: 'Quick position', grpClockSync: 'System clock',
       grpExtraClocks: 'Multiple clocks', grpProject: 'Project & updates',
@@ -124,11 +124,11 @@
       syncUnsupported: 'Auto time sync not supported here',
       syncOk: 'System time sync requested', syncFail: 'Sync failed (admin may be required): %s',
       grpClockManager: 'Multi-timezone manager',
-      cmNote: 'Open several independent clock windows, each with its own arbitrary UTC offset, style and display options; edits rebuild that window immediately.',
+      cmNote: 'Open several independent clock windows, each with its own UTC offset, style and display options. New windows are offset automatically and never block clicks on other apps.',
       cmName: 'Name', cmZone: 'Time zone', cmCustomZone: 'Custom UTC offset', cmOffsetHint: 'Format ±HH:MM, e.g. +05:30 / -08:00',
       cmStyle: 'Window style', cmStyleGlobal: 'Follow global', cmShowSeconds: 'Show seconds',
       cmAdd: '＋ Add window', cmEmpty: 'No clock windows yet — add one above',
-      cmEdit: 'Edit', cmHide: 'Hide', cmShow: 'Show', cmDelete: 'Close',
+      cmEdit: 'Edit', cmHide: 'Hide', cmShow: 'Show', cmDelete: 'Delete',
       cmRunning: 'Running', cmStopped: 'Hidden', cmEditHint: 'Edit above, then Save to rebuild this window', cmSave: 'Save', cmCancel: 'Cancel',
       extraBrowserOnly: '(browser preview: config only, no window created)',
       permTitle: 'Permissions & startup', permChecking: 'Checking permissions…',
@@ -175,6 +175,11 @@
     document.documentElement.lang = L;
     var nodes = document.querySelectorAll('[data-i18n]');
     for (var i = 0; i < nodes.length; i++) {
+      // 🔴 v0.5.1 修复：带 data-dyn 的节点内容由 JS 动态管理
+      // （权限状态、定时状态、校时状态、铃声状态等）。
+      // 如果这里再写 textContent，会把已渲染的真实状态重置回占位文案
+      // —— 这正是「权限界面一直显示正在检查权限…」的根因。
+      if (nodes[i].hasAttribute('data-dyn')) continue;
       nodes[i].textContent = t(L, nodes[i].getAttribute('data-i18n'));
     }
     function opts(id, group) {

@@ -13,7 +13,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.5.0';
+  var APP_VERSION = '0.5.1';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -419,11 +419,33 @@
     cmToggleCustomRow();
   }
 
+  // 轮询核对真实窗口（WebView2 冷启动可能慢于单次固定延时）。
+  function cmVerifyWindow(c, triesLeft) {
+    if (triesLeft <= 0 || !Prefs.isNative) return;
+    Prefs.listClockWindows().then(function (wins) {
+      if (!Array.isArray(wins)) return;
+      if (wins.indexOf('clock-' + c.id) >= 0 || c.visible === false) return;
+      if (triesLeft > 1) {
+        setTimeout(function () { cmVerifyWindow(c, triesLeft - 1); }, 700);
+        return;
+      }
+      // 确实没建起来 → 标为未运行，避免列表显示假的「运行中」
+      var next = (state.extraClocks || []).map(function (x) {
+        return x.id === c.id ? Object.assign({}, x, { visible: false }) : x;
+      });
+      state.extraClocks = next;
+      Prefs.save({ extraClocks: next });
+      renderClockManager();
+    }).catch(function () {});
+  }
+
   function cmSpawn(c) {
-    if (Prefs.isNative) {
-      Prefs.addClockWindow(c.id, c.label, c.offset, c.style, c.showSeconds, c.visible)
-        .catch(function () {});
-    }
+    if (!Prefs.isNative) return;
+    // v0.5.1：窗口创建是异步的，创建后核对真实窗口列表，
+    // 创建失败时把该项标为「未运行」，避免列表显示假的「运行中」。
+    Prefs.addClockWindow(c.id, c.label, c.offset, c.style, c.showSeconds, c.visible)
+      .then(function () { setTimeout(function () { cmVerifyWindow(c, 4); }, 500); })
+      .catch(function () {});
   }
 
   function renderClockManager() {
@@ -530,6 +552,8 @@
     cmToggleCustomRow();
 
     byId('cm-add').addEventListener('click', function () {
+      var addBtn = this;
+      if (addBtn.disabled) return;          // v0.5.1：建窗期间防连点
       var c = cmReadEditor();
       if (!c) return;
       c.id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
@@ -537,8 +561,10 @@
       if (list.length >= 8) return;
       list.push(c);
       changed({ extraClocks: list });
+      addBtn.disabled = true;
       cmSpawn(c);
       cmResetEditor();
+      setTimeout(function () { addBtn.disabled = false; }, 900);
     });
     byId('cm-save').addEventListener('click', function () {
       if (!editingClockId) return;
@@ -1250,6 +1276,15 @@
     }
 
     Prefs.onChanged(applyRemotePrefs);
+
+    // v0.5.1：Tauri hide() 不触发 document.hidden，用 Rust 定向事件停/复表，
+    // 避免隐藏的额外时钟窗口仍每秒 tick 占用资源（用户反馈「变卡」）。
+    if (isExtraWindow) {
+      Prefs.listen('clock-visibility', function (v) {
+        if (!engine) return;
+        if (v === false) engine.stop(); else engine.start();
+      });
+    }
 
     if (Prefs.isNative) {
       Prefs.getAutostart().then(function (actual) {
