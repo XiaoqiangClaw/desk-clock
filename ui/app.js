@@ -13,7 +13,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.5.1';
+  var APP_VERSION = '0.6.0';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -76,14 +76,10 @@
   var privError = false;    // v0.5: 权限状态读取失败（显示重试按钮）
   var editingClockId = null; // v0.5: 管理器正在编辑的窗口 id
 
-  // v0.3 dual-view + v0.5 extra clock windows.
-  // __DC_VIEW__ === 'settings' -> independent settings window.
-  // __DC_EXTRA__ === 1        -> an extra timezone clock window.
+  // v0.6：所有窗口配置化。注入值仅作为旧构建/兜底，真实值以 state 为准。
   var isSettingsWindow = window.__DC_VIEW__ === 'settings';
   var isExtraWindow = !!window.__DC_EXTRA__;
-  var tzOffset = (typeof window.__DC_TZ_OFFSET__ === 'number') ? window.__DC_TZ_OFFSET__ : null;
-  var tzLabel = window.__DC_TZ_LABEL__ || '';
-  // v0.5 管理器：每窗口独立样式/秒显示（空字符串=跟随全局）
+  var injectedTzOffset = (typeof window.__DC_TZ_OFFSET__ === 'number') ? window.__DC_TZ_OFFSET__ : null;
   var injectedStyle = window.__DC_STYLE__ || '';
   var injectedShowSeconds = (typeof window.__DC_SHOW_SECONDS__ === 'boolean')
     ? window.__DC_SHOW_SECONDS__ : null;
@@ -96,7 +92,7 @@
     settings.hidden = false;
   } else if (isExtraWindow) {
     document.body.setAttribute('data-view', 'extra');
-    document.title = 'Desk Clock · ' + (tzLabel || '时区时钟');
+    document.title = 'Desk Clock · ' + (window.__DC_TZ_LABEL__ || '时区时钟');
     // 额外窗口不显示齿轮/缩放柄/设置面板（设置是全局唯一窗口）
     if (gear) gear.style.display = 'none';
     var rh0 = document.getElementById('resize-handle');
@@ -111,28 +107,31 @@
     return state.color || '';
   }
 
-  // v0.4 多时区：构造一个「本地 getter 返回目标墙上时间」的 Date。
-  // display UTC = UTC + targetOffset；而本地 getter = UTC + localOffset，
-  // 因此把 epoch 平移 (targetOffset - localOffset) 即可。
-  // getTimezoneOffset() = UTC - local（分钟），故 localOffset = -getTimezoneOffset()。
+  // v0.6：时区来自本窗口配置（null=本机时间）。
+  function currentTzOffset() {
+    if (state && typeof state.tzOffset === 'number' && isFinite(state.tzOffset)) return state.tzOffset;
+    return injectedTzOffset;
+  }
   function displayNow() {
     var now = new Date();
-    if (tzOffset === null) return now;
-    return new Date(now.getTime() + (tzOffset + now.getTimezoneOffset()) * 60000);
+    var off = currentTzOffset();
+    if (off === null || off === undefined) return now;
+    return new Date(now.getTime() + (off + now.getTimezoneOffset()) * 60000);
   }
 
-  // v0.5：有效「显示秒」= 额外窗口若指定了注入值则用之，否则跟随全局。
+  // v0.6：窗口样式/秒显示都来自本窗口配置；注入值仅兜底。
   function effectiveShowSeconds() {
-    if (isExtraWindow && injectedShowSeconds !== null) return injectedShowSeconds;
-    return !!state.showSeconds;
+    if (state && typeof state.showSeconds === 'boolean') return state.showSeconds;
+    if (injectedShowSeconds !== null) return injectedShowSeconds;
+    return true;
   }
 
   // v0.5 流畅度优化：applyRoot 拆为两档——
   // applyRootLite：滑块 input 等高频事件只改 CSS 变量（无 DOM 遍历）；
   // applyRoot（完整）：语言/样式等低频变化才重刷 i18n 与全部 data-* 属性。
   function applyRootLite() {
-    // v0.5 管理器：额外时钟窗口可覆盖样式/秒显示；空字符串=跟随全局 state。
-    var effStyle = (isExtraWindow && injectedStyle && STYLES.indexOf(injectedStyle) >= 0)
+    // v0.6：state 已是本窗口的完整配置，直接应用；注入值仅作旧构建兜底。
+    var effStyle = (isExtraWindow && injectedStyle && STYLES.indexOf(injectedStyle) >= 0 && !state.style)
       ? injectedStyle : state.style;
     var style = STYLES.indexOf(effStyle) >= 0 ? effStyle : 'flip';
     var backdrop = BACKDROPS.indexOf(state.backdrop) >= 0 ? state.backdrop : 'none';
@@ -187,12 +186,16 @@
     return !isSettingsWindow && !isExtraWindow && settings && !settings.hidden;
   }
 
+  // v0.6：缩放/尺寸作用于「当前编辑目标窗口」，而非写死 main。
   function setWindowSize(scale) {
-    if (!Prefs.isNative || isSettingsWindow || isExtraWindow) return;
-    var core = window.__TAURI__ && window.__TAURI__.core;
-    if (!core || typeof core.invoke !== 'function') return;
-    core.invoke('set_window_size', { width: BASE_W * scale, height: BASE_H * scale })
-      .catch(function () { /* WM refused; keep the visual scale anyway */ });
+    if (!Prefs.isNative) return;
+    if (!Prefs.isSettingsView && !isSettingsWindow && !isExtraWindow) {
+      // 时钟窗口改自己
+      Prefs.setWindowGeometry(Prefs.getSelfId(), null, null, scale).catch(function () {});
+      return;
+    }
+    // 设置窗口：改当前选中的目标窗口
+    Prefs.setWindowGeometry(Prefs.getTargetId(), null, null, scale).catch(function () {});
   }
 
   // ------------------------------------------- cross-window preference sync
@@ -440,7 +443,24 @@
   }
 
   function cmSpawn(c) {
-    if (!Prefs.isNative) return;
+    if (!Prefs.isNative) {
+      // 浏览器预览：也写入 clocks，便于回归与本地调试
+      try {
+        var all = JSON.parse(localStorage.getItem('deskclock.clocks') || '{"activeId":"main","clocks":{}}');
+        if (!all.clocks) all.clocks = {};
+        if (!all.clocks.main) all.clocks.main = {};
+        var base = {};
+        var d = Prefs.DEFAULTS, wk;
+        for (wk in d) if (Object.prototype.hasOwnProperty.call(d, wk)) base[wk] = d[wk];
+        for (wk in all.clocks.main) if (Object.prototype.hasOwnProperty.call(all.clocks.main, wk)) base[wk] = all.clocks.main[wk];
+        base.tzOffset = c.offset; base.tzLabel = c.label;
+        if (c.style) base.style = c.style;
+        if (typeof c.showSeconds === 'boolean') base.showSeconds = c.showSeconds;
+        all.clocks[c.id] = base;
+        localStorage.setItem('deskclock.clocks', JSON.stringify(all));
+      } catch (e) {}
+      return;
+    }
     // v0.5.1：窗口创建是异步的，创建后核对真实窗口列表，
     // 创建失败时把该项标为「未运行」，避免列表显示假的「运行中」。
     Prefs.addClockWindow(c.id, c.label, c.offset, c.style, c.showSeconds, c.visible)
@@ -479,14 +499,25 @@
 
       var actions = document.createElement('div');
       actions.className = 'cm-row-actions';
-      function mk(labelKey, cls, fn) {
+      function mk(labelKey, cls, fn, action) {
         var b = document.createElement('button');
         b.type = 'button'; b.className = 'dc-btn tiny ' + (cls || 'ghost');
         b.textContent = I18n.t(L, labelKey);
+        if (action) b.setAttribute('data-cm-action', action);
         b.addEventListener('click', fn);
         return b;
       }
-      actions.appendChild(mk('cmEdit', 'ghost', function () { cmFillEditor(c); }));
+      // v0.6：直达该窗口的完整设置（切换编辑目标 + 跳到外观页）
+      actions.appendChild(mk('cmSettings', 'ghost', function () {
+        Prefs.setActiveClock(c.id).then(function (fresh) {
+          state = fresh;
+          applyRoot(); syncControls(); syncAnalogPenetrateControls();
+          refreshTargetOptions();
+          var t = document.querySelector('#settings-tabs .tab[data-tab="appearance"]');
+          if (t) t.click();
+        }).catch(function () {});
+      }, 'settings'));
+      actions.appendChild(mk('cmEdit', 'ghost', function () { cmFillEditor(c); }, 'edit'));
       actions.appendChild(mk(c.visible === false ? 'cmShow' : 'cmHide', 'ghost', function () {
         var vis = !(c.visible !== false);
         var next = (state.extraClocks || []).map(function (x) {
@@ -494,13 +525,13 @@
         });
         changed({ extraClocks: next });
         if (Prefs.isNative) Prefs.setClockWindowVisible(c.id, vis).catch(function () {});
-      }));
+      }, 'visibility'));
       actions.appendChild(mk('cmDelete', 'danger', function () {
         var next = (state.extraClocks || []).filter(function (x) { return x.id !== c.id; });
         changed({ extraClocks: next });
         if (Prefs.isNative) Prefs.closeClockWindow(c.id).catch(function () {});
         if (editingClockId === c.id) cmResetEditor();
-      }));
+      }, 'delete'));
 
       row.appendChild(info); row.appendChild(actions);
       box.appendChild(row);
@@ -523,6 +554,47 @@
         : I18n.t(STRINGS_LANG(), 'alarmCustomNone');
       st.classList.toggle('ok', hasCustom && state && state.alarmTone === 'custom');
     }
+  }
+
+  // v0.6：设置窗口顶部的「正在编辑」选择器 —— 切换后重读该窗口配置并刷新全部控件。
+  function refreshTargetOptions() {
+    var sel = byId('target-clock');
+    var wrap = byId('head-target');
+    if (!sel || !wrap) return;
+    wrap.hidden = !isSettingsWindow;   // 只有独立设置窗口显示
+    if (!isSettingsWindow) return;
+    var L = STRINGS_LANG();
+    var all = [];
+    // main 恒存在
+    all.push({ id: 'main', name: I18n.t(L, 'cmMain') });
+    (state.extraClocks || []).forEach(function (c) {
+      all.push({ id: c.id, name: c.label || cmOffsetText(c.offset) });
+    });
+    var cur = Prefs.getTargetId();
+    sel.textContent = '';
+    all.forEach(function (o) {
+      var op = document.createElement('option');
+      op.value = o.id; op.textContent = o.name;
+      sel.appendChild(op);
+    });
+    if (all.some(function (o) { return o.id === cur; })) sel.value = cur;
+    else { sel.value = 'main'; }
+  }
+
+  function bindTargetSelector() {
+    var sel = byId('target-clock');
+    if (!sel || !isSettingsWindow) return;
+    sel.addEventListener('change', function () {
+      var id = sel.value;
+      Prefs.setActiveClock(id).then(function (fresh) {
+        state = fresh;
+        applyRoot();
+        syncControls();
+        syncAnalogPenetrateControls();
+        setWindowSize(state.scale);
+        refreshTargetOptions();
+      }).catch(function () {});
+    });
   }
 
   function bindClockManager() {
@@ -950,6 +1022,7 @@
 
   function syncControls() {
     byId('pref-lang').value = state.lang;
+    syncTzControls();
     byId('pref-style').value = state.style;
     byId('pref-font').value = state.font;
     byId('custom-font-row').hidden = state.font !== CUSTOM;
@@ -978,6 +1051,7 @@
     renderAlarmList();
     syncAlarmToneUI();
     renderClockManager();
+    refreshTargetOptions();
     updateTimerUI();
     var vb = byId('ver-badge'), av = byId('about-version');
     if (vb) vb.textContent = 'v' + APP_VERSION;
@@ -1046,6 +1120,53 @@
     }
   }
 
+  // v0.6：每个窗口的时区（含主窗口）。local=本机时间；__custom__=任意 UTC 偏移。
+  function tzSelectOptions() {
+    var sel = byId('pref-tz');
+    if (!sel || sel.options.length) return;
+    var L = STRINGS_LANG();
+    var local = document.createElement('option');
+    local.value = 'local'; local.textContent = I18n.t(L, 'cmTzLocal');
+    sel.appendChild(local);
+    ZONES.forEach(function (z) {
+      var o = document.createElement('option');
+      o.value = String(z.offset); o.textContent = z.label;
+      sel.appendChild(o);
+    });
+    var custom = document.createElement('option');
+    custom.value = '__custom__'; custom.textContent = I18n.t(L, 'cmCustomZone');
+    sel.appendChild(custom);
+  }
+  function syncTzControls() {
+    tzSelectOptions();
+    var sel = byId('pref-tz'), row = byId('pref-tz-custom-row'), inp = byId('pref-tz-offset');
+    if (!sel || !row || !inp) return;
+    var off = state.tzOffset;
+    var isCustom = (typeof off === 'number' && isFinite(off) &&
+      !ZONES.some(function (z) { return z.offset === off; }));
+    if (off === null || off === undefined) sel.value = 'local';
+    else if (isCustom) { sel.value = '__custom__'; inp.value = cmOffsetText(off).replace('UTC', ''); }
+    else sel.value = String(off);
+    row.hidden = !isCustom;
+  }
+  function bindTzControls() {
+    var sel = byId('pref-tz'), row = byId('pref-tz-custom-row'), inp = byId('pref-tz-offset');
+    if (!sel || !row || !inp) return;
+    sel.addEventListener('change', function () {
+      row.hidden = sel.value !== '__custom__';
+      if (sel.value === 'local') changed({ tzOffset: null, tzLabel: '' }, { rebuild: true });
+      else if (sel.value !== '__custom__') {
+        var off = Number(sel.value) || 0;
+        changed({ tzOffset: off, tzLabel: zoneLabelFor(off) }, { rebuild: true });
+      }
+    });
+    inp.addEventListener('change', function () {
+      var off = parseZoneInput(inp.value);
+      if (off === null) { inp.value = ''; return; }
+      changed({ tzOffset: off, tzLabel: cmOffsetText(off) }, { rebuild: true });
+    });
+  }
+
   function bindControls() {
     gear.addEventListener('click', function () {
       if (isExtraWindow) return;
@@ -1073,6 +1194,7 @@
     });
 
     byId('pref-lang').addEventListener('change', function (e) { changed({ lang: e.target.value }); });
+    bindTzControls();
     byId('pref-style').addEventListener('change', function (e) { changed({ style: e.target.value }, { rebuild: true }); });
     byId('pref-font').addEventListener('change', function (e) {
       var v = e.target.value;
@@ -1266,6 +1388,8 @@
     applyRoot();
     bindControls();
     bindExtras();
+    bindTargetSelector();
+    refreshTargetOptions();
     syncControls();
     syncAnalogPenetrateControls();
     bindWheelSelects();   // v0.5：滚轮切换下拉
@@ -1276,6 +1400,24 @@
     }
 
     Prefs.onChanged(applyRemotePrefs);
+    // v0.6：某窗口配置变化时，只应用到自己 / 当前编辑目标
+    Prefs.onWindowChanged(function (fresh) {
+      var rebuild = fresh.style !== state.style || fresh.showSeconds !== state.showSeconds;
+      state = fresh;
+      if (isSettingsWindow) { applyRoot(); syncControls(); }
+      else {
+        applyRootLite();
+        if (engine) engine.setOptions({
+          showSeconds: effectiveShowSeconds(), hour12: state.hour12,
+          animate: state.style === 'flip'
+        });
+        if (rebuild && engine) {
+          var n = displayNow();
+          ensureDom(engine.buildParts(n), true);
+          renderFrame({ parts: engine.buildParts(n), now: n });
+        }
+      }
+    });
 
     // v0.5.1：Tauri hide() 不触发 document.hidden，用 Rust 定向事件停/复表，
     // 避免隐藏的额外时钟窗口仍每秒 tick 占用资源（用户反馈「变卡」）。
@@ -1305,7 +1447,7 @@
     // 样式切换时同步「指针穿透」行的显示
     var styleSel = byId('pref-style');
     if (styleSel) styleSel.addEventListener('change', function () { setTimeout(syncAnalogPenetrateControls, 0); });
-    if (!isSettingsWindow && !isExtraWindow) listenMoved();
+    if (!isSettingsWindow) listenMoved();   // v0.6：每个时钟窗口各自记录位置
   }
 
   boot().catch(function (err) {

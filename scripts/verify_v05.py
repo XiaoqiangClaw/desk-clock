@@ -261,14 +261,14 @@ with sync_playwright() as pw:
           and cl[0]["showSeconds"] is False, cl)
     check("manager row rendered", page.locator("#cm-list .cm-row").count() == 1)
     # hide/show
-    page.locator("#cm-list .cm-row button").nth(1).click()
+    page.locator("#cm-list .cm-row button[data-cm-action='visibility']").click()
     page.wait_for_timeout(150)
     check("manager hide updates config", prefs(page)["extraClocks"][0]["visible"] is False)
-    page.locator("#cm-list .cm-row button").nth(1).click()
+    page.locator("#cm-list .cm-row button[data-cm-action='visibility']").click()
     page.wait_for_timeout(150)
     check("manager show updates config", prefs(page)["extraClocks"][0]["visible"] is True)
     # edit
-    page.locator("#cm-list .cm-row button").nth(0).click()
+    page.locator("#cm-list .cm-row button[data-cm-action='edit']").click()
     page.wait_for_timeout(120)
     check("edit exposes save/cancel",
           page.locator("#cm-save").is_visible() and page.locator("#cm-cancel").is_visible())
@@ -286,7 +286,7 @@ with sync_playwright() as pw:
     cl = prefs(page).get("extraClocks", [])
     check("arbitrary +05:45 offset -> 345 min", any(c["offset"] == 345 for c in cl), cl)
     # delete via danger button
-    page.locator("#cm-list .cm-row button.danger").first.click()
+    page.locator("#cm-list .cm-row button[data-cm-action='delete']").first.click()
     page.wait_for_timeout(150)
     check("manager delete removes one", len(prefs(page).get("extraClocks", [])) == 1)
 
@@ -337,7 +337,7 @@ with sync_playwright() as pw:
     page.locator("#cm-zone").select_option("0")
     page.locator("#cm-add").click()
     page.wait_for_timeout(200)
-    del_txt = page.locator("#cm-list .cm-row button.danger").first.inner_text()
+    del_txt = page.locator("#cm-list .cm-row button[data-cm-action='delete']").first.inner_text()
     check("manager destructive button says 删除", "删除" in del_txt and "关闭" not in del_txt, del_txt)
 
     # c) 固定尺寸：窗口不可缩放由 Rust 保证；这里验证内部滚动容器 + 隐藏滚动条

@@ -51,6 +51,8 @@
       cmAdd: '＋ 添加窗口', cmEmpty: '还没有时钟窗口，先在上方添加一个吧',
       cmEdit: '编辑', cmHide: '隐藏', cmShow: '显示', cmDelete: '删除',
       cmRunning: '运行中', cmStopped: '已隐藏', cmEditHint: '编辑后点「保存修改」重建窗口', cmSave: '保存修改', cmCancel: '取消编辑',
+      cmSettings: '设置', cmMain: '主窗口', cmTimezone: '时区', cmTzLocal: '本机时间',
+      editingClock: '正在编辑', cmFullSettings: '每个窗口都能独立设置样式、颜色、字体、大小、位置、时区等；用顶部的「正在编辑」切换目标窗口。',
       extraBrowserOnly: '（浏览器预览：仅记录配置，不创建窗口）',
       // permissions
       permTitle: '权限与启动', permChecking: '正在检查权限…',
@@ -130,6 +132,8 @@
       cmAdd: '＋ Add window', cmEmpty: 'No clock windows yet — add one above',
       cmEdit: 'Edit', cmHide: 'Hide', cmShow: 'Show', cmDelete: 'Delete',
       cmRunning: 'Running', cmStopped: 'Hidden', cmEditHint: 'Edit above, then Save to rebuild this window', cmSave: 'Save', cmCancel: 'Cancel',
+      cmSettings: 'Settings', cmMain: 'Main clock', cmTimezone: 'Time zone', cmTzLocal: 'Local time',
+      editingClock: 'Editing', cmFullSettings: 'Every window has its own style, colour, font, size, position and time zone. Use the "Editing" selector at the top to switch target.',
       extraBrowserOnly: '(browser preview: config only, no window created)',
       permTitle: 'Permissions & startup', permChecking: 'Checking permissions…',
       permRetry: 'Check again', permCheckFail: 'Could not read permission status — please retry.',

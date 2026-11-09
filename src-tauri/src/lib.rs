@@ -517,7 +517,7 @@ fn ensure_settings_window(app: &AppHandle) -> Result<(), String> {
     .transparent(false)
     .skip_taskbar(false)
     .center()
-    .initialization_script("window.__DC_VIEW__='settings';")
+    .initialization_script("window.__DC_VIEW__='settings';window.__DC_SETTINGS__=1;")
     .build()
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -575,7 +575,8 @@ fn spawn_extra_window(
     let offset_json = serde_json::to_string(&offset).unwrap_or_else(|_| "0".into());
     let style_json = serde_json::to_string(&style.unwrap_or("")).unwrap_or_else(|_| "\"\"".into());
     let init = format!(
-        "window.__DC_EXTRA__=1;window.__DC_TZ_OFFSET__={};window.__DC_TZ_LABEL__={};window.__DC_STYLE__={};window.__DC_SHOW_SECONDS__={};",
+        "window.__DC_EXTRA__=1;window.__DC_CLOCK_ID__={};window.__DC_TZ_OFFSET__={};window.__DC_TZ_LABEL__={};window.__DC_STYLE__={};window.__DC_SHOW_SECONDS__={};",
+        serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into()),
         offset_json, label_json, style_json, show_seconds
     );
     let count = app
@@ -586,8 +587,12 @@ fn spawn_extra_window(
     // 🔴 v0.5.1：新窗口错开位置，否则全部 .center() 完全重叠、看起来像没显示。
     let x = 160.0 + (count % 6.0) * 46.0;
     let y = 140.0 + (count % 6.0) * 40.0;
-    // v0.5.1：不再强制置顶，跟随用户的「总在最前」全局设置。
-    let on_top = read_prefs(app).always_on_top;
+    // v0.6：置顶取自本窗口自己的配置（所有窗口平等）。
+    let legacy = read_prefs(app);
+    let mut all = read_clocks(app, &legacy);
+    let cfg = ensure_clock_cfg(&mut all, id);
+    let on_top = cfg.get("alwaysOnTop").and_then(|v| v.as_bool()).unwrap_or(false);
+    let _ = write_clocks(app, &all);
     let win = tauri::WebviewWindowBuilder::new(
         app,
         &win_label,
@@ -621,8 +626,9 @@ fn spawn_extra_window(
 /// 表现为「点了添加但窗口不出现 / 整个程序卡顿」。命令立即返回，
 /// 真正建窗在独立线程完成。
 #[tauri::command]
-async fn add_clock_window(
+fn add_clock_window(
     app: AppHandle,
+    state: State<'_, PrefsState>,
     id: String,
     label: String,
     offset: f64,
@@ -644,6 +650,34 @@ async fn add_clock_window(
     let secs = show_seconds.unwrap_or(true);
     let vis = visible.unwrap_or(true);
     let lbl = label.clone();
+
+    // v0.6：新窗口继承 main 当前完整配置（样式/颜色/字体/大小…），
+    // 再覆盖时区/名称/秒显示，避免新窗口“什么都没配”。
+    {
+        let legacy = state.0.lock().map(|g| g.clone()).unwrap_or_default();
+        let mut all = read_clocks(&app, &legacy);
+        let base = all
+            .get("clocks")
+            .and_then(|c| c.get("main"))
+            .cloned()
+            .unwrap_or_else(default_window_prefs);
+        let mut cfg = base;
+        if let Some(o) = cfg.as_object_mut() {
+            o.insert("tzOffset".into(), serde_json::json!(off));
+            o.insert("tzLabel".into(), serde_json::json!(label));
+            if let Some(s) = st.as_ref() {
+                o.insert("style".into(), serde_json::json!(s));
+            }
+            o.insert("showSeconds".into(), serde_json::json!(secs));
+            o.insert("x".into(), serde_json::Value::Null);
+            o.insert("y".into(), serde_json::Value::Null);
+        }
+        if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
+            clocks.insert(clean.clone(), cfg);
+        }
+        let _ = write_clocks(&app, &all);
+    }
+
     std::thread::spawn(move || {
         let _ = spawn_extra_window(
             &app,
@@ -660,7 +694,7 @@ async fn add_clock_window(
 
 /// v0.5.1：隐藏后重新显示时同样用后台线程建窗，避免同步 build 死锁。
 #[tauri::command]
-async fn set_clock_window_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
+fn set_clock_window_visible(app: AppHandle, id: String, visible: bool) -> Result<(), String> {
     let clean: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let win_label = format!("clock-{}", clean);
     let win = app.get_webview_window(&win_label);
@@ -692,12 +726,24 @@ async fn set_clock_window_visible(app: AppHandle, id: String, visible: bool) -> 
 }
 
 #[tauri::command]
-fn close_clock_window(app: AppHandle, id: String) -> Result<(), String> {
+fn close_clock_window(app: AppHandle, state: State<'_, PrefsState>, id: String) -> Result<(), String> {
     let clean: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let win_label = format!("clock-{}", clean);
     if let Some(win) = app.get_webview_window(&win_label) {
         win.destroy().map_err(|e| e.to_string())?;
     }
+    // v0.6：同步删掉该窗口的配置，避免残留
+    let legacy = state.0.lock().map(|g| g.clone()).unwrap_or_default();
+    let mut all = read_clocks(&app, &legacy);
+    if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
+        clocks.remove(&clean);
+    }
+    if all.get("activeId").and_then(|v| v.as_str()) == Some(clean.as_str()) {
+        if let Some(o) = all.as_object_mut() {
+            o.insert("activeId".into(), serde_json::json!("main"));
+        }
+    }
+    let _ = write_clocks(&app, &all);
     Ok(())
 }
 
@@ -708,6 +754,286 @@ fn list_clock_windows(app: AppHandle) -> Vec<String> {
         .filter(|k| k.starts_with("clock-"))
         .cloned()
         .collect()
+}
+
+// ================================================================
+// v0.6.0：每窗口完整配置（clocks.json）
+//
+// 所有时钟窗口完全平等：每个窗口一份完整配置，主窗口只是默认存在的那一个。
+// 全部用 serde_json::Value 读写（本机无 cargo，避免结构体/泛型编译风险）。
+// 旧 prefs.json 继续存全局项与窗口清单（extra_clocks），升级不丢配置。
+// ================================================================
+
+/// 每窗口完整配置的默认值（与前端 DEFAULTS 的每窗口部分一致）。
+fn default_window_prefs() -> serde_json::Value {
+    serde_json::json!({
+        "style": "flip",
+        "showSeconds": true,
+        "hour12": false,
+        "showSeparator": true,
+        "alwaysOnTop": false,
+        "backdrop": "none",
+        "scale": 1.0,
+        "opacity": 1.0,
+        "font": "",
+        "customFont": "",
+        "color": "",
+        "customColor": "#f6f7f9",
+        "analogTheme": "dark",
+        "analogPenetrate": false,
+        "clickThrough": false,
+        "tzOffset": serde_json::Value::Null,
+        "tzLabel": "",
+        "x": serde_json::Value::Null,
+        "y": serde_json::Value::Null
+    })
+}
+
+fn clocks_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("clocks.json")
+}
+
+/// 读 clocks.json；不存在时用旧 prefs 的 extra_clocks 与全局值迁移。
+fn read_clocks(app: &AppHandle, legacy: &Prefs) -> serde_json::Value {
+    if let Ok(s) = fs::read_to_string(clocks_path(app)) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            if v.get("clocks").map(|c| c.is_object()).unwrap_or(false) {
+                return v;
+            }
+        }
+    }
+    // ---- 迁移：main 用旧全局值；extra_clocks 逐条补齐 ----
+    let mut base = default_window_prefs();
+    if let Some(o) = base.as_object_mut() {
+        o.insert("style".into(), serde_json::json!(legacy.style));
+        o.insert("showSeconds".into(), serde_json::json!(legacy.show_seconds));
+        o.insert("hour12".into(), serde_json::json!(legacy.hour12));
+        o.insert("showSeparator".into(), serde_json::json!(legacy.show_separator));
+        o.insert("alwaysOnTop".into(), serde_json::json!(legacy.always_on_top));
+        o.insert("backdrop".into(), serde_json::json!(legacy.backdrop));
+        o.insert("scale".into(), serde_json::json!(legacy.scale));
+        o.insert("opacity".into(), serde_json::json!(legacy.opacity));
+        o.insert("font".into(), serde_json::json!(legacy.font));
+        o.insert("customFont".into(), serde_json::json!(legacy.custom_font));
+        o.insert("color".into(), serde_json::json!(legacy.color));
+        o.insert("customColor".into(), serde_json::json!(legacy.custom_color));
+        o.insert("analogTheme".into(), serde_json::json!(legacy.analog_theme));
+        o.insert("analogPenetrate".into(), serde_json::json!(legacy.analog_penetrate));
+        o.insert("clickThrough".into(), serde_json::json!(legacy.click_through));
+        o.insert("x".into(), serde_json::json!(legacy.x));
+        o.insert("y".into(), serde_json::json!(legacy.y));
+    }
+    let mut clocks = serde_json::Map::new();
+    clocks.insert("main".into(), base.clone());
+    for v in legacy.extra_clocks.iter() {
+        let Some(id) = v.get("id").and_then(|x| x.as_str()) else { continue };
+        let clean: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        if clean.is_empty() {
+            continue;
+        }
+        let mut cfg = base.clone();
+        if let Some(o) = cfg.as_object_mut() {
+            if let Some(off) = v.get("offset").and_then(|x| x.as_f64()) {
+                o.insert("tzOffset".into(), serde_json::json!(off));
+            }
+            if let Some(lbl) = v.get("label").and_then(|x| x.as_str()) {
+                o.insert("tzLabel".into(), serde_json::json!(lbl));
+            }
+            if let Some(st) = v.get("style").and_then(|x| x.as_str()) {
+                if !st.is_empty() {
+                    o.insert("style".into(), serde_json::json!(st));
+                }
+            }
+            if let Some(s) = v.get("showSeconds").and_then(|x| x.as_bool()) {
+                o.insert("showSeconds".into(), serde_json::json!(s));
+            }
+        }
+        clocks.insert(clean, cfg);
+    }
+    serde_json::json!({ "activeId": "main", "clocks": clocks })
+}
+
+fn write_clocks(app: &AppHandle, v: &serde_json::Value) -> Result<(), String> {
+    let p = clocks_path(app);
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = p.with_extension("json.tmp");
+    let body = serde_json::to_string_pretty(v).map_err(|e| e.to_string())?;
+    fs::write(&tmp, body).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 保证某窗口配置存在（缺失时用 main 或默认值补）。
+fn ensure_clock_cfg(all: &mut serde_json::Value, id: &str) -> serde_json::Value {
+    let clocks = all
+        .get_mut("clocks")
+        .and_then(|c| c.as_object_mut());
+    let Some(clocks) = clocks else {
+        return default_window_prefs();
+    };
+    if let Some(v) = clocks.get(id) {
+        return v.clone();
+    }
+    // 新窗口：复制 main 当前配置（避免新窗口“什么都没配”），再覆盖时区/名称
+    let base = clocks
+        .get("main")
+        .cloned()
+        .unwrap_or_else(default_window_prefs);
+    clocks.insert(id.to_string(), base.clone());
+    base
+}
+
+#[tauri::command]
+fn get_window_configs(app: AppHandle, state: State<'_, PrefsState>) -> Result<serde_json::Value, String> {
+    let legacy = state.0.lock().map_err(|e| e.to_string())?.clone();
+    Ok(read_clocks(&app, &legacy))
+}
+
+/// 设置窗口切换「当前编辑目标」并持久化。
+#[tauri::command]
+fn set_active_clock(app: AppHandle, state: State<'_, PrefsState>, id: String) -> Result<(), String> {
+    let legacy = state.0.lock().map_err(|e| e.to_string())?.clone();
+    let mut all = read_clocks(&app, &legacy);
+    if let Some(o) = all.as_object_mut() {
+        o.insert("activeId".into(), serde_json::json!(id));
+    }
+    write_clocks(&app, &all)
+}
+
+/// 单个窗口的完整配置（时钟窗口启动 / 设置窗口读取目标时用）。
+#[tauri::command]
+fn get_window_prefs(app: AppHandle, state: State<'_, PrefsState>, id: String) -> Result<serde_json::Value, String> {
+    let legacy = state.0.lock().map_err(|e| e.to_string())?.clone();
+    let mut all = read_clocks(&app, &legacy);
+    let cfg = ensure_clock_cfg(&mut all, &id);
+    let _ = write_clocks(&app, &all);
+    Ok(cfg)
+}
+
+/// 字段级 patch 写入某窗口，并广播（各窗口只应用自己 id；设置窗口应用当前目标）。
+#[tauri::command]
+fn set_window_prefs(
+    app: AppHandle,
+    state: State<'_, PrefsState>,
+    id: String,
+    patch: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let legacy = state.0.lock().map_err(|e| e.to_string())?.clone();
+    let mut all = read_clocks(&app, &legacy);
+    let mut cfg = ensure_clock_cfg(&mut all, &id);
+    if let (Some(obj), Some(p)) = (cfg.as_object_mut(), patch.as_object()) {
+        for (k, v) in p {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
+        clocks.insert(id.clone(), cfg.clone());
+    }
+    write_clocks(&app, &all)?;
+
+    // 应用到真实窗口（仅当该窗口存在）
+    let win_label = if id == "main" { "main".to_string() } else { format!("clock-{}", id) };
+    if let Some(win) = app.get_webview_window(&win_label) {
+        if let Some(v) = cfg.get("alwaysOnTop").and_then(|x| x.as_bool()) {
+            let _ = win.set_always_on_top(v);
+        }
+        // v0.5.1 铁律：额外时钟窗口恒鼠标穿透，避免透明置顶大矩形
+        // 拦住其它应用点击；只有主窗口允许按配置切换穿透。
+        if win_label == "main" {
+            if let Some(v) = cfg.get("clickThrough").and_then(|x| x.as_bool()) {
+                let _ = win.set_ignore_cursor_events(v);
+            }
+        } else {
+            let _ = win.set_ignore_cursor_events(true);
+        }
+        if let Some(sc) = cfg.get("scale").and_then(|x| x.as_f64()) {
+            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(640.0 * sc, 220.0 * sc)));
+        }
+        if let (Some(x), Some(y)) = (
+            cfg.get("x").and_then(|v| v.as_f64()),
+            cfg.get("y").and_then(|v| v.as_f64()),
+        ) {
+            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+                x as i32, y as i32,
+            )));
+        }
+    }
+
+    let _ = app.emit(
+        "window-prefs-changed",
+        serde_json::json!({ "id": id, "prefs": cfg }),
+    );
+    Ok(cfg)
+}
+
+/// 某窗口专属的位置/尺寸命令（不再硬编码 main）。
+#[tauri::command]
+fn set_window_geometry(
+    app: AppHandle,
+    id: String,
+    x: Option<f64>,
+    y: Option<f64>,
+    scale: Option<f64>,
+) -> Result<(), String> {
+    let win_label = if id == "main" { "main".to_string() } else { format!("clock-{}", id) };
+    let win = app
+        .get_webview_window(&win_label)
+        .ok_or_else(|| "window missing".to_string())?;
+    if let Some(sc) = scale {
+        win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(640.0 * sc, 220.0 * sc)))
+            .map_err(|e| e.to_string())?;
+    }
+    if let (Some(x), Some(y)) = (x, y) {
+        win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+            x as i32, y as i32,
+        )))
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 九宫格定位作用于指定窗口（不再固定 main）。
+#[tauri::command]
+fn preset_position_for(app: AppHandle, id: String, pos: String) -> Result<(f64, f64), String> {
+    let win_label = if id == "main" { "main".to_string() } else { format!("clock-{}", id) };
+    let win = app
+        .get_webview_window(&win_label)
+        .ok_or_else(|| "window missing".to_string())?;
+    let monitor = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| win.primary_monitor().ok().flatten())
+        .ok_or_else(|| "no monitor available".to_string())?;
+    let area = monitor.work_area();
+    let size = win.outer_size().map_err(|e| e.to_string())?;
+    let margin: i32 = 12;
+    let left = area.position.x + margin;
+    let top = area.position.y + margin;
+    let right = area.position.x + area.size.width as i32 - size.width as i32 - margin;
+    let bottom = area.position.y + area.size.height as i32 - size.height as i32 - margin;
+    let cx = area.position.x + (area.size.width as i32 - size.width as i32) / 2;
+    let cy = area.position.y + (area.size.height as i32 - size.height as i32) / 2;
+    let (x, y) = match pos.as_str() {
+        "top-left" => (left, top),
+        "top-center" => (cx, top),
+        "top-right" => (right, top),
+        "center-left" => (left, cy),
+        "center" => (cx, cy),
+        "center-right" => (right, cy),
+        "bottom-left" => (left, bottom),
+        "bottom-center" => (cx, bottom),
+        "bottom-right" => (right, bottom),
+        _ => (cx, cy),
+    };
+    win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)))
+        .map_err(|e| e.to_string())?;
+    Ok((x as f64, y as f64))
 }
 
 // ------------------------------------------------------------- external link
@@ -1156,6 +1482,12 @@ pub fn run() {
             close_clock_window,
             set_clock_window_visible,
             list_clock_windows,
+            get_window_configs,
+            set_active_clock,
+            get_window_prefs,
+            set_window_prefs,
+            set_window_geometry,
+            preset_position_for,
             open_link,
             sync_system_time,
             schedule_timer,

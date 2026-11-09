@@ -71,7 +71,7 @@ window.__TAURI__={
       if(cmd==='get_timer_status') return Promise.resolve(null);
       if(cmd==='take_donate_intent') return Promise.resolve(false);
       if(cmd==='get_privilege_status') return Promise.resolve({platform:'windows',isElevated:false,canElevate:true,runAsAdmin:false,note:'shim'});
-      if(cmd==='check_update') return Promise.resolve({latest:'0.5.1'});
+      if(cmd==='check_update') return Promise.resolve({latest:'0.6.0'});
       if(cmd==='get_shutdown_status') return Promise.resolve(null);
     }catch(e){}
     return Promise.resolve();
@@ -222,7 +222,7 @@ with sync_playwright() as pw:
     extras = prefs(page).get("extraClocks", [])
     check("arbitrary offset persisted", any(c.get("offset") == 330 for c in extras), extras)
     # 编辑 / 显示隐藏 / 删除
-    page.locator("#cm-list .cm-row").first.locator("button").nth(0).click(); page.wait_for_timeout(120)
+    page.locator("#cm-list .cm-row").first.locator('button[data-cm-action="edit"]').click(); page.wait_for_timeout(120)
     check("edit mode exposes save", page.locator("#cm-save").is_visible())
     page.locator("#cm-save").click(); page.wait_for_timeout(150)
     check("save returns to add mode", page.locator("#cm-add").is_visible())
@@ -238,7 +238,7 @@ with sync_playwright() as pw:
           page.locator("#donate-toggle").inner_text())
     check("project link present", page.locator("#project-link").count() == 1)
     check("check-update button present", page.locator("#check-update").count() == 1)
-    check("version badge shows 0.5.1", "0.5.1" in page.locator("#ver-badge").inner_text(),
+    check("version badge shows 0.6.0", "0.6.0" in page.locator("#ver-badge").inner_text(),
           page.locator("#ver-badge").inner_text())
     qr = page.locator("#donate-img")
     page.locator("#donate-toggle").click(); page.wait_for_timeout(150)

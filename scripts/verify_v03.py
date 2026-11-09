@@ -174,19 +174,22 @@ with sync_playwright() as pw:
     check("dedicated window QR loads", settings.locator("#donate-img").evaluate("img => img.complete && img.naturalWidth > 100"))
     settings.screenshot(path=str(OUT / "settings-window-v03.png"), full_page=True)
 
-    # ---------------- cross-window broadcast (REAL onChanged path) ----------------
-    # Boot already registered Prefs.onChanged(applyRemotePrefs) against the
-    # shim's event.listen. Emitting a full merged object must update every
-    # control WITHOUT invoking set_prefs (no write-back loop between windows).
+    # ---------------- cross-window broadcast (v0.6 语义) ----------------
+    # 全局广播只负责全局项；窗口项(style/showSeconds)走 window-prefs-changed
+    # 定向事件。两者都不应触发 set_prefs 回写。
     calls_before = settings.evaluate("window.__dc_set_prefs_calls")
     settings.evaluate("window.__dc_broadcast('prefs-changed', {style:'segment', showSeconds:false, lang:'zh-CN'})")
     settings.wait_for_timeout(250)
-    check("broadcast updates settings controls (no save loop)",
+    check("global broadcast does not clobber window-specific controls",
+          settings.locator("#pref-style").input_value() != "segment",
+          settings.locator("#pref-style").input_value())
+    settings.evaluate("window.__dc_broadcast('window-prefs-changed', {id:'main', prefs:{style:'segment', showSeconds:false}})")
+    settings.wait_for_timeout(250)
+    check("window-prefs-changed updates settings controls (no save loop)",
           settings.locator("#pref-style").input_value() == "segment"
           and settings.locator("#pref-seconds").is_checked() is False,
-          settings.locator("#pref-style").input_value())
-    # The local cache legitimately follows the authoritative broadcast (so a
-    # fresh window sees current prefs), but NO backend write may happen.
+          (settings.locator("#pref-style").input_value(),
+           settings.locator("#pref-seconds").is_checked()))
     check("broadcast refreshes local cache from authoritative state",
           prefs(settings).get("style") == "segment", prefs(settings).get("style"))
     check("broadcast triggered zero set_prefs calls (no write-back loop)",

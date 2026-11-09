@@ -50,6 +50,8 @@ def set_prefs(page, obj):
 def boot(page, obj=None):
     page.goto(URL)
     set_prefs(page, obj or {})
+    # v0.6：每次模拟全新启动，清掉上一轮残留的每窗口配置
+    page.evaluate("localStorage.removeItem('deskclock.clocks')")
     page.reload()
     page.wait_for_timeout(900)
 

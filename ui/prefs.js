@@ -27,6 +27,8 @@
     timerMode: 'duration',     // v0.4: duration | clock
     autoTimeSync: false,       // v0.4: 启动时自动校时
     extraClocks: [],           // v0.5: [{id,label,offset,style,showSeconds,visible}] 窗口管理器
+    tzOffset: null,            // v0.6: 每窗口时区偏移（分钟，null=本机时间）
+    tzLabel: '',               // v0.6: 每窗口时区显示名
     runAsAdmin: false,
     x: null,
     y: null
@@ -38,13 +40,30 @@
   var TONES = ['gentle', 'bell', 'tick', 'rise', 'chord', 'custom'];
   var CLOCK_STYLES = ['flip', 'minimal', 'neon', 'eink', 'segment', 'typewriter', 'glass', 'analog'];
   var STORAGE_KEY = 'deskclock.prefs';
+  var CLOCKS_KEY = 'deskclock.clocks';
   var isNative = !!window.__TAURI__;
   var SAVE_DEBOUNCE = 200;
+
+  // v0.6：窗口 id。时钟窗口用注入值，主窗口无注入→回退 'main'；
+  // 设置窗口用 __DC_SETTINGS__ 标记，只操作当前 targetId。
+  var selfId = window.__DC_CLOCK_ID__ || 'main';
+  var isSettingsWindow = !!window.__DC_SETTINGS__ || window.__DC_VIEW__ === 'settings';
+  var targetId = selfId;
+  var supportsWindowApi = false;   // v0.6：后端是否提供每窗口配置 API
+
+  // 全局项（所有窗口共享）vs 每窗口项。save() 按此分流。
+  var GLOBAL_KEYS = ['lang', 'alarms', 'alarmSound', 'alarmTone', 'timerAction',
+    'timerMode', 'autoTimeSync', 'autostart', 'runAsAdmin', 'extraClocks'];
+  var WINDOW_KEYS = ['style', 'showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop',
+    'backdrop', 'scale', 'opacity', 'font', 'customFont', 'color', 'customColor',
+    'analogTheme', 'analogPenetrate', 'clickThrough', 'tzOffset', 'tzLabel', 'x', 'y'];
 
   var current = clone(DEFAULTS);
   var saveTimer = null;
   var saveWaiters = [];
   var pendingPatch = {};
+  var pendingGlobal = {};
+  var pendingWin = {};
 
   function clone(obj) {
     var out = {}, k;
@@ -73,6 +92,12 @@
     // jump to the top-left corner instead of staying centered.
     if (typeof obj.x === 'number' && isFinite(obj.x)) out.x = obj.x;
     if (typeof obj.y === 'number' && isFinite(obj.y)) out.y = obj.y;
+    // v0.6：每窗口时区（null 表示本机时间）
+    if (obj.tzOffset === null) out.tzOffset = null;
+    else if (typeof obj.tzOffset === 'number' && isFinite(obj.tzOffset)) {
+      out.tzOffset = Math.max(-840, Math.min(840, Math.round(obj.tzOffset)));
+    }
+    if (typeof obj.tzLabel === 'string') out.tzLabel = obj.tzLabel.slice(0, 24);
     if (FONTS.indexOf(obj.font) >= 0) out.font = obj.font;
     if (typeof obj.customFont === 'string' && obj.customFont.length <= 120) out.customFont = obj.customFont;
     if (typeof obj.color === 'string' && (COLORS.indexOf(obj.color) >= 0 || HEX.test(obj.color))) out.color = obj.color;
@@ -126,17 +151,116 @@
     catch (e) { /* private mode / quota: keep working in memory */ }
   }
 
+  // ---------- 浏览器预览的本地窗口配置（与 Rust clocks.json 同形） ----------
+  function readLocalClocks() {
+    try {
+      var v = JSON.parse(localStorage.getItem(CLOCKS_KEY) || 'null');
+      if (v && v.clocks && typeof v.clocks === 'object') return v;
+    } catch (e) {}
+    var c = {}; c.main = windowDefaults();
+    return { activeId: 'main', clocks: c };
+  }
+  function writeLocalClocks(v) {
+    try { localStorage.setItem(CLOCKS_KEY, JSON.stringify(v)); } catch (e) {}
+  }
+  function windowDefaults() {
+    var out = {}, i;
+    for (i = 0; i < WINDOW_KEYS.length; i++) {
+      var k = WINDOW_KEYS[i];
+      if (k === 'tzOffset' || k === 'x' || k === 'y') out[k] = null;
+      else out[k] = DEFAULTS[k];   // 原始值直接取；clone() 只适用于对象
+    }
+    return out;
+  }
+  function localWindowPrefs(id) {
+    var all = readLocalClocks();
+    if (!all.clocks[id]) { all.clocks[id] = all.clocks.main ? clone(all.clocks.main) : windowDefaults(); writeLocalClocks(all); }
+    return all.clocks[id];
+  }
+
+  // 把窗口配置 + 全局配置合并成一个扁平对象供现有控件使用。
+  // 浏览器预览/回归里 localStorage(prefs) 是唯一权威（脚本会直接 setItem），
+  // 故这里让 g 的窗口字段覆盖 w；原生由 Rust clocks.json 提供权威值。
+  // 且 g 未显式提供的窗口项一律走默认值，避免上一轮 clocks 残留污染。
+  function hydrate(globalObj, winObj) {
+    var merged = normalize(globalObj), k;
+    for (k in winObj) if (Object.prototype.hasOwnProperty.call(winObj, k)) merged[k] = winObj[k];
+    if (!isNative) {
+      // 浏览器预览/回归里 localStorage(prefs) 是权威：g 里显式写的窗口项覆盖 w；
+      // g 未写的窗口项保留 w（clocks.json 模拟）的值，避免冲掉真实窗口配置。
+      for (k = 0; k < WINDOW_KEYS.length; k++) {
+        var key = WINDOW_KEYS[k];
+        if (globalObj && Object.prototype.hasOwnProperty.call(globalObj, key)) merged[key] = globalObj[key];
+      }
+    }
+    return merged;
+  }
+
   function load() {
     if (!isNative) {
-      current = normalize(readLocal());
+      var g = readLocal();
+      var hasClocks = false;
+      try { hasClocks = !!localStorage.getItem(CLOCKS_KEY); } catch (e) {}
+      var w;
+      if (!hasClocks) {
+        // 首次 / 回归脚本直接写 localStorage 的场景：把 g 里的窗口字段作为 main 初值
+        w = windowDefaults();
+        for (var kk = 0; kk < WINDOW_KEYS.length; kk++) {
+          var key = WINDOW_KEYS[kk];
+          if (Object.prototype.hasOwnProperty.call(g, key)) w[key] = g[key];
+        }
+        var initAll = { activeId: 'main', clocks: { main: w } };
+        writeLocalClocks(initAll);
+      } else {
+        w = localWindowPrefs(isSettingsWindow ? (readLocalClocks().activeId || 'main') : selfId);
+      }
+      if (isSettingsWindow) targetId = readLocalClocks().activeId || 'main';
+      current = hydrate(g, w);
       return Promise.resolve(clone(current));
     }
-    return invoke('get_prefs')
-      .then(function (p) { current = normalize(p); return clone(current); })
-      .catch(function () { current = normalize(readLocal()); return clone(current); });
+    // 全局 + 指定窗口配置并行读取。
+    // 兼容旧后端/shim：若 get_window_configs 不可用（返回空），
+    // 直接把 get_prefs 的完整对象当本窗口配置（单份 prefs 行为）。
+    return Promise.all([
+      invoke('get_prefs'),
+      invoke('get_window_configs').catch(function () { return null; }),
+      isSettingsWindow
+        ? invoke('get_window_configs').catch(function () { return null; })
+        : invoke('get_window_prefs', { id: selfId }).catch(function () { return null; })
+    ]).then(function (res) {
+      var g = res[0] || {}, all = res[1];
+      var legacyMode = !all || !all.clocks;
+      supportsWindowApi = !legacyMode;
+      if (isSettingsWindow) {
+        targetId = (all && all.activeId) || 'main';
+        var w = (all && all.clocks && all.clocks[targetId]) || windowDefaults();
+        current = legacyMode ? normalize(g) : hydrate(g, w);
+      } else {
+        var wp = legacyMode ? g : (res[2] || windowDefaults());
+        current = legacyMode ? normalize(g) : hydrate(g, wp);
+      }
+      writeLocal(g);
+      return clone(current);
+    }).catch(function () {
+      current = normalize(readLocal());
+      return clone(current);
+    });
   }
 
   function get() { return clone(current); }
+  function getTargetId() { return targetId; }
+  function getSelfId() { return selfId; }
+  function isSettingsView() { return isSettingsWindow; }
+
+  // 切换设置窗口的编辑目标，并重读该窗口配置。
+  function setActiveClock(id) {
+    targetId = id;
+    if (!isNative) {
+      var all = readLocalClocks(); all.activeId = id; writeLocalClocks(all);
+      return load();
+    }
+    return invoke('set_active_clock', { id: id }).then(function () { return load(); });
+  }
 
   function merge(patch) {
     var k;
@@ -146,37 +270,93 @@
     current = normalize(current);
   }
 
-  // Field-level patch write. Rust owns the authoritative full object and
-  // broadcasts it back, so two windows can never overwrite each other's fields.
+  // v0.6：字段级 patch 按 GLOBAL/WINDOW 分流，并合并高频写入（滑块拖动）。
+  // 全局项写根 prefs（所有窗口共享）；窗口项只写目标窗口配置。
   function save(patch) {
     merge(patch);
     var snapshot = clone(current);
-    writeLocal(snapshot);
     var k;
     for (k in patch) {
-      if (Object.prototype.hasOwnProperty.call(patch, k)) pendingPatch[k] = snapshot[k];
+      if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
+      if (WINDOW_KEYS.indexOf(k) >= 0) pendingWin[k] = snapshot[k];
+      else pendingGlobal[k] = snapshot[k];
     }
-    if (!isNative) return Promise.resolve(clone(snapshot));
+    if (!isNative) {
+      if (Object.keys(pendingGlobal).length) { writeLocal(mergeLocal(pendingGlobal)); pendingGlobal = {}; }
+      if (Object.keys(pendingWin).length) {
+        // 浏览器预览/回归：窗口项也镜像回 prefs key，保持旧断言与行为一致。
+        writeLocal(mergeLocal(pendingWin));
+        var all = readLocalClocks();
+        var cur = all.clocks[targetId] || windowDefaults();
+        for (var w in pendingWin) cur[w] = pendingWin[w];
+        all.clocks[targetId] = cur; all.activeId = targetId;
+        writeLocalClocks(all); pendingWin = {};
+      }
+      return Promise.resolve(clone(snapshot));
+    }
+    // 立即镜像到 localStorage（供回归/降级读取）；真正的 IPC 仍合并节流。
+    // v0.6：真后端（supportsWindowApi）下窗口项绝不写 root prefs，避免污染全局；
+    // 旧后端/shim 下才把窗口项一并镜像，保持旧断言兼容。
+    var mirror = {};
+    for (var mg in pendingGlobal) mirror[mg] = pendingGlobal[mg];
+    if (!supportsWindowApi) {
+      for (var mw in pendingWin) mirror[mw] = pendingWin[mw];
+    } else if (Object.keys(pendingWin).length) {
+      try {
+        var mwAll = readLocalClocks();
+        var mwCur = mwAll.clocks[targetId] || windowDefaults();
+        for (var mw2 in pendingWin) mwCur[mw2] = pendingWin[mw2];
+        mwAll.clocks[targetId] = mwCur;
+        writeLocalClocks(mwAll);
+      } catch (e) {}
+    }
+    if (Object.keys(mirror).length) writeLocal(mergeLocal(mirror));
     return new Promise(function (resolve) {
       saveWaiters.push(resolve);
       if (saveTimer !== null) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
         saveTimer = null;
-        var waiters = saveWaiters.slice();
-        saveWaiters = [];
-        var sent = pendingPatch;
-        pendingPatch = {};
-        invoke('set_prefs', { patch: sent })
-          .then(function () { waiters.forEach(function (fn) { fn(clone(snapshot)); }); })
-          .catch(function () { waiters.forEach(function (fn) { fn(clone(snapshot)); }); });
+        var waiters = saveWaiters.slice(); saveWaiters = [];
+        var gp = pendingGlobal, wp = pendingWin;
+        pendingGlobal = {}; pendingWin = {};
+        var jobs = [];
+        var merged = {};
+        for (var kg in gp) merged[kg] = gp[kg];
+        if (!supportsWindowApi) {
+          // 旧后端 / 测试 shim：窗口项并入根 prefs，保证读写一致
+          for (var kw in wp) merged[kw] = wp[kw];
+          if (Object.keys(merged).length) jobs.push(invoke('set_prefs', { patch: merged }));
+        } else {
+          if (Object.keys(gp).length) jobs.push(invoke('set_prefs', { patch: gp }));
+          if (Object.keys(wp).length) {
+            jobs.push(invoke('set_window_prefs', { id: targetId, patch: wp })
+              .catch(function () { return invoke('set_prefs', { patch: wp }); }));
+          }
+        }
+        if (!jobs.length) { waiters.forEach(function (fn) { fn(clone(snapshot)); }); return; }
+        Promise.all(jobs.map(function (p) { return p.catch(function () {}); }))
+          .then(function () { waiters.forEach(function (fn) { fn(clone(snapshot)); }); });
       }, SAVE_DEBOUNCE);
     });
   }
 
+  function mergeLocal(patch) {
+    var cur = readLocal(), k;
+    for (k in patch) if (Object.prototype.hasOwnProperty.call(patch, k)) cur[k] = patch[k];
+    return cur;
+  }
+
   function setWindowPosition(x, y) {
+    // v0.6：作用于当前目标窗口（设置窗口选谁改谁，时钟窗口改自己）
     if (!isNative) return Promise.resolve(null);
-    return invoke('set_window_position', { x: x, y: y })
-      .then(function (pos) { return pos || null; })
+    return invoke('set_window_geometry', { id: targetId, x: x, y: y })
+      .then(function () { return { x: x, y: y }; })
+      .catch(function () { return null; });
+  }
+
+  function setWindowGeometry(id, x, y, scale) {
+    if (!isNative) return Promise.resolve(null);
+    return invoke('set_window_geometry', { id: id, x: x, y: y, scale: scale })
       .catch(function () { return null; });
   }
 
@@ -212,12 +392,29 @@
     } catch (e) { return function () {}; }
   }
 
-  // `cb` receives a NORMALIZED full prefs object. Never call save() from it.
+  // 全局项广播（语言/闹钟等）：所有窗口都应用，但不得覆盖本窗口专属字段。
   function onChanged(cb) {
     return listen('prefs-changed', function (payload) {
       if (!payload || typeof payload !== 'object') return;
-      current = normalize(payload);
-      writeLocal(current);
+      var g = normalize(payload), k;
+      // 只把全局项合进 current，保留本窗口的 WINDOW_KEYS 现值
+      for (k in g) {
+        if (Object.prototype.hasOwnProperty.call(g, k) && WINDOW_KEYS.indexOf(k) < 0) current[k] = g[k];
+      }
+      writeLocal(payload);
+      cb(clone(current));
+    });
+  }
+
+  // v0.6：某窗口配置变化。时钟窗口只响应自己 id；设置窗口只响应当前目标。
+  function onWindowChanged(cb) {
+    return listen('window-prefs-changed', function (payload) {
+      if (!payload || typeof payload !== 'object') return;
+      var id = payload.id;
+      if (!isSettingsWindow && id !== selfId) return;
+      if (isSettingsWindow && id !== targetId) return;
+      var w = payload.prefs || {}, k;
+      for (k in w) if (Object.prototype.hasOwnProperty.call(w, k)) current[k] = w[k];
       cb(clone(current));
     });
   }
@@ -298,7 +495,8 @@
   }
 
   // v0.4 new native commands
-  function presetPosition(pos) { return invoke('preset_position', { pos: pos }); }
+  // v0.6：九宫格作用于当前目标窗口（不再是写死的 main）。
+  function presetPosition(pos) { return invoke('preset_position_for', { id: targetId, pos: pos }); }
   function setClickThrough(enabled) { return invoke('set_click_through', { enabled: !!enabled }); }
   function syncSystemTime() { return invoke('sync_system_time'); }
   // 外链：前端只传标识符，Rust 解析真实地址（不接受任意 URL）。
@@ -323,6 +521,10 @@
     return invoke('set_clock_window_visible', { id: id, visible: !!visible });
   }
   function listClockWindows() { return invoke('list_clock_windows'); }
+  // v0.6：窗口配置 / 目标选择
+  function windowConfigs() { return invoke('get_window_configs'); }
+  function setWindowPrefs(id, patch) { return invoke('set_window_prefs', { id: id, patch: patch }); }
+  function windowPrefs(id) { return invoke('get_window_prefs', { id: id }); }
 
   window.DeskClock.Prefs = {
     DEFAULTS: clone(DEFAULTS),
@@ -331,8 +533,15 @@
     load: load,
     get: get,
     save: save,
+    getTargetId: getTargetId,
+    getSelfId: getSelfId,
+    isSettingsView: isSettingsView,
+    setActiveClock: setActiveClock,
+    onChanged: onChanged,
+    onWindowChanged: onWindowChanged,
     resetDefaults: function () { return save(clone(DEFAULTS)); },
     setWindowPosition: setWindowPosition,
+    setWindowGeometry: setWindowGeometry,
     getAutostart: getAutostart,
     setAutostart: setAutostart,
     onChanged: onChanged,
@@ -351,6 +560,9 @@
     addClockWindow: addClockWindow,
     closeClockWindow: closeClockWindow,
     setClockWindowVisible: setClockWindowVisible,
-    listClockWindows: listClockWindows
+    listClockWindows: listClockWindows,
+    windowConfigs: windowConfigs,
+    setWindowPrefs: setWindowPrefs,
+    windowPrefs: windowPrefs
   };
 })();
