@@ -14,144 +14,289 @@
   <button id="gear" type="button" title="设置" aria-label="设置">&#9881;</button>
 
   <div id="settings" class="settings" hidden>
+
     <div class="settings-head">
-      <span id="settings-title">设置</span>
+      <span class="brand"><span class="brand-dot"></span><span id="settings-title">设置</span><small id="ver-badge"></small></span>
       <button id="settings-close" type="button" aria-label="关闭">&times;</button>
     </div>
 
     <div id="tray-hint" class="tray-hint" hidden data-i18n="trayHint">本程序常驻系统托盘，不在任务栏显示；关闭窗口只会隐藏到托盘，托盘菜单可重新显示或退出。</div>
 
-    <label><span data-i18n="language">界面语言</span>
-      <select id="pref-lang">
-        <option value="zh-CN">简体中文</option>
-        <option value="en">English</option>
-      </select>
-    </label>
+    <div class="settings-body">
+      <nav class="settings-tabs" id="settings-tabs">
+        <button type="button" class="tab active" data-tab="appearance"><i>◐</i><span data-i18n="tabAppearance">外观</span></button>
+        <button type="button" class="tab" data-tab="window"><i>▢</i><span data-i18n="tabWindow">窗口</span></button>
+        <button type="button" class="tab" data-tab="alarm"><i>⏰</i><span data-i18n="tabAlarm">闹钟</span></button>
+        <button type="button" class="tab" data-tab="timer"><i>⏲</i><span data-i18n="tabTimer">定时任务</span></button>
+        <button type="button" class="tab" data-tab="timezone"><i>🌐</i><span data-i18n="tabTimezone">时区校时</span></button>
+        <button type="button" class="tab" data-tab="permission"><i>⛨</i><span data-i18n="tabPermission">权限</span></button>
+        <button type="button" class="tab" data-tab="about"><i>☕</i><span data-i18n="tabAbout">关于</span></button>
+      </nav>
 
-    <label><span data-i18n="style">时钟样式</span>
-      <select id="pref-style">
-        <option value="flip">翻页卡片</option>
-        <option value="minimal">极简细体</option>
-        <option value="neon">霓虹</option>
-        <option value="eink">电子墨水</option>
-        <option value="segment">七段数码</option>
-        <option value="typewriter">打字机</option>
-        <option value="glass">毛玻璃</option>
-        <option value="analog">指针表盘</option>
-      </select>
-    </label>
+      <div class="settings-panels" id="settings-panels">
 
-    <label><span data-i18n="font">时钟字体</span>
-      <select id="pref-font">
-        <option value="">跟随样式（推荐）</option>
-        <option value="sans">系统无衬线</option>
-        <option value="serif">衬线体</option>
-        <option value="mono">等宽 / 数码感</option>
-        <option value="rounded">圆润黑体</option>
-        <option value="__custom__">自定义…</option>
-      </select>
-    </label>
+        <!-- ============================ 外观 ============================ -->
+        <section class="panel active" data-panel="appearance">
+          <div class="card">
+            <div class="card-title" data-i18n="grpBasic">基础显示</div>
+            <label><span data-i18n="language">界面语言</span>
+              <select id="pref-lang" class="dc-select">
+                <option value="zh-CN">简体中文</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <label><span data-i18n="style">时钟样式</span>
+              <select id="pref-style" class="dc-select">
+                <option value="flip">翻页卡片</option>
+                <option value="minimal">极简细体</option>
+                <option value="neon">霓虹</option>
+                <option value="eink">电子墨水</option>
+                <option value="segment">七段数码</option>
+                <option value="typewriter">打字机</option>
+                <option value="glass">毛玻璃</option>
+                <option value="analog">指针表盘</option>
+              </select>
+            </label>
+            <label><span data-i18n="showSeconds">显示秒</span>
+              <input id="pref-seconds" type="checkbox" class="dc-switch">
+            </label>
+            <label><span data-i18n="hour12">12 小时制</span>
+              <input id="pref-hour12" type="checkbox" class="dc-switch">
+            </label>
+            <label><span data-i18n="showSeparator">显示分隔符 :</span>
+              <input id="pref-separator" type="checkbox" class="dc-switch">
+            </label>
+            <div class="field-note" data-i18n="separatorNote">关闭后仍保留时、分、秒之间的间距。</div>
+          </div>
 
-    <label id="custom-font-row" hidden><span data-i18n="fontCustom">自定义…</span>
-      <input id="pref-font-custom" type="text" placeholder="Microsoft YaHei, sans-serif">
-    </label>
+          <div class="card">
+            <div class="card-title" data-i18n="grpTypography">字体与配色</div>
+            <label><span data-i18n="font">时钟字体</span>
+              <select id="pref-font" class="dc-select">
+                <option value="">跟随样式（推荐）</option>
+                <option value="sans">系统无衬线</option>
+                <option value="serif">衬线体</option>
+                <option value="mono">等宽 / 数码感</option>
+                <option value="rounded">圆润黑体</option>
+                <option value="__custom__">自定义…</option>
+              </select>
+            </label>
+            <label id="custom-font-row" hidden><span data-i18n="fontCustom">自定义…</span>
+              <input id="pref-font-custom" type="text" class="dc-input" placeholder="Microsoft YaHei, sans-serif">
+            </label>
+            <label><span data-i18n="color">时钟颜色</span>
+              <select id="pref-color" class="dc-select">
+                <option value="">跟随样式（推荐）</option>
+                <option value="#ffffff">白色</option>
+                <option value="#8bfaff">青色</option>
+                <option value="#6bff8f">绿色</option>
+                <option value="#ffb000">琥珀</option>
+                <option value="#ff9ec7">粉色</option>
+                <option value="#ff6b6b">红色</option>
+                <option value="#191a1c">黑色</option>
+                <option value="__custom__">自定义…</option>
+              </select>
+            </label>
+            <label id="custom-color-row" hidden><span data-i18n="colorCustom">自定义…</span>
+              <input id="pref-color-custom" type="color" value="#f6f7f9">
+            </label>
+            <label id="analog-theme-row" hidden><span data-i18n="analogTheme">表盘配色</span>
+              <select id="pref-analog-theme" class="dc-select">
+                <option value="dark">深色表盘</option>
+                <option value="light">浅色表盘</option>
+              </select>
+            </label>
+          </div>
 
-    <label><span data-i18n="color">时钟颜色</span>
-      <select id="pref-color">
-        <option value="">跟随样式（推荐）</option>
-        <option value="#ffffff">白色</option>
-        <option value="#8bfaff">青色</option>
-        <option value="#6bff8f">绿色</option>
-        <option value="#ffb000">琥珀</option>
-        <option value="#ff9ec7">粉色</option>
-        <option value="#ff6b6b">红色</option>
-        <option value="#191a1c">黑色</option>
-        <option value="__custom__">自定义…</option>
-      </select>
-    </label>
+          <div class="card">
+            <div class="card-title" data-i18n="grpCanvas">画布</div>
+            <label><span data-i18n="backdrop">背景板</span>
+              <select id="pref-backdrop" class="dc-select">
+                <option value="none">无</option>
+                <option value="blur">模糊</option>
+                <option value="dim">暗色</option>
+                <option value="light">浅色</option>
+              </select>
+            </label>
+            <label><span data-i18n="scale">大小</span>
+              <input id="pref-scale" type="range" min="0.5" max="2.5" step="0.05" value="1">
+            </label>
+            <div class="scale-value"><output id="scale-out">100%</output><span data-i18n="resizeTip">拖动右下角也可调整</span></div>
+            <label><span data-i18n="opacity">不透明度</span>
+              <input id="pref-opacity" type="range" min="0.3" max="1" step="0.05" value="1">
+            </label>
+            <div class="field-note" data-i18n="opacityNote">仅影响桌面时钟窗口，设置窗口始终保持清晰。</div>
+          </div>
+        </section>
 
-    <label id="custom-color-row" hidden><span data-i18n="colorCustom">自定义…</span>
-      <input id="pref-color-custom" type="color" value="#f6f7f9">
-    </label>
+        <!-- ============================ 窗口 ============================ -->
+        <section class="panel" data-panel="window">
+          <div class="card">
+            <div class="card-title" data-i18n="grpWindow">窗口行为</div>
+            <label><span data-i18n="alwaysOnTop">总在最前</span>
+              <input id="pref-ontop" type="checkbox" class="dc-switch">
+            </label>
+            <label><span data-i18n="autostart">开机自启</span>
+              <input id="pref-autostart" type="checkbox" class="dc-switch">
+            </label>
+            <label><span data-i18n="clickThrough">鼠标穿透</span>
+              <input id="pref-clickthrough" type="checkbox" class="dc-switch">
+            </label>
+            <div class="field-note" data-i18n="clickThroughNote">开启后点击可穿透到下方窗口；需先在托盘菜单关闭本开关才能再操作设置。</div>
+          </div>
 
-    <label><span data-i18n="showSeconds">显示秒</span>
-      <input id="pref-seconds" type="checkbox">
-    </label>
+          <div class="card">
+            <div class="card-title" data-i18n="grpPosition">快速定位</div>
+            <div class="field-note" data-i18n="positionNote">把时钟一键放到屏幕常用位置（按当前显示器工作区计算）。</div>
+            <div class="pos-grid" id="pos-grid">
+              <button type="button" data-pos="top-left" title="左上">◤</button>
+              <button type="button" data-pos="top-center" title="上中">▲</button>
+              <button type="button" data-pos="top-right" title="右上">◥</button>
+              <button type="button" data-pos="center-left" title="左中">◀</button>
+              <button type="button" data-pos="center" title="居中">◆</button>
+              <button type="button" data-pos="center-right" title="右中">▶</button>
+              <button type="button" data-pos="bottom-left" title="左下">◣</button>
+              <button type="button" data-pos="bottom-center" title="下中">▼</button>
+              <button type="button" data-pos="bottom-right" title="右下">◢</button>
+            </div>
+          </div>
+        </section>
 
-    <label><span data-i18n="hour12">12 小时制</span>
-      <input id="pref-hour12" type="checkbox">
-    </label>
+        <!-- ============================ 闹钟 ============================ -->
+        <section class="panel" data-panel="alarm">
+          <div class="card">
+            <div class="card-title" data-i18n="alarmTitle">闹钟</div>
+            <label><span data-i18n="alarmSound">响铃</span>
+              <input id="pref-alarm-sound" type="checkbox" class="dc-switch">
+            </label>
+            <div class="field-note" data-i18n="alarmSoundNote">到点播放提示音（浏览器需先有交互才允许出声）。</div>
+            <button id="alarm-test-sound" class="dc-btn ghost tiny" type="button" data-i18n="alarmTestSound">试听</button>
 
-    <label><span data-i18n="alwaysOnTop">总在最前</span>
-      <input id="pref-ontop" type="checkbox">
-    </label>
+            <div class="alarm-editor">
+              <div class="alarm-time">
+                <select id="alarm-hour" class="dc-select" aria-label="小时"></select>
+                <span class="alarm-colon">:</span>
+                <select id="alarm-minute" class="dc-select" aria-label="分钟"></select>
+              </div>
+              <div class="alarm-repeat-row">
+                <label class="inline"><input id="alarm-repeat" type="checkbox" class="dc-switch"><span data-i18n="alarmRepeat">每天重复</span></label>
+                <button id="alarm-add" class="dc-btn tiny" type="button" data-i18n="alarmAdd">＋ 添加</button>
+              </div>
+            </div>
+            <div id="alarm-list" class="alarm-list"></div>
+          </div>
+        </section>
 
-    <label><span data-i18n="autostart">开机自启</span>
-      <input id="pref-autostart" type="checkbox">
-    </label>
+        <!-- ============================ 定时任务 ============================ -->
+        <section class="panel" data-panel="timer">
+          <div class="card">
+            <div class="card-title" data-i18n="timerTitle">定时关机 / 重启</div>
+            <label><span data-i18n="timerAction">动作</span>
+              <select id="shutdown-action" class="dc-select">
+                <option value="shutdown" data-i18n="actionShutdown">关机</option>
+                <option value="reboot" data-i18n="actionReboot">重启</option>
+              </select>
+            </label>
+            <label><span data-i18n="timerMode">方式</span>
+              <select id="shutdown-mode" class="dc-select">
+                <option value="duration" data-i18n="modeDuration">时长（分钟后）</option>
+                <option value="clock" data-i18n="modeClock">指定时间点</option>
+              </select>
+            </label>
+            <div id="shutdown-duration-row" class="shutdown-editor">
+              <input id="shutdown-min" type="number" min="1" max="1440" step="1" value="60" class="dc-input">
+              <span class="unit" data-i18n="minutes">分钟</span>
+            </div>
+            <div id="shutdown-clock-row" class="shutdown-editor" hidden>
+              <input id="shutdown-time" type="time" value="23:00" class="dc-input">
+              <span class="unit" data-i18n="clockHint">（当天或次日）</span>
+            </div>
+            <div class="shutdown-actions">
+              <button id="shutdown-start" class="dc-btn tiny" type="button" data-i18n="shutdownStart">启动</button>
+              <button id="shutdown-cancel" class="dc-btn tiny danger" type="button" hidden data-i18n="shutdownCancel">取消</button>
+            </div>
+            <div id="shutdown-status" class="shutdown-status" data-i18n="shutdownOff">未启用</div>
+            <div class="shutdown-warn" data-i18n="shutdownWarn">到点将执行系统动作，请先保存工作；可随时取消。</div>
+          </div>
+        </section>
 
-    <label><span data-i18n="backdrop">背景板</span>
-      <select id="pref-backdrop">
-        <option value="none">无</option>
-        <option value="blur">模糊</option>
-        <option value="dim">暗色</option>
-        <option value="light">浅色</option>
-      </select>
-    </label>
+        <!-- ============================ 时区与校时 ============================ -->
+        <section class="panel" data-panel="timezone">
+          <div class="card">
+            <div class="card-title" data-i18n="grpClockSync">系统时间校准</div>
+            <div class="sync-row">
+              <span id="sync-clock" class="sync-clock">--:--:--</span>
+              <button id="sync-now" class="dc-btn tiny" type="button" data-i18n="syncNow">立即校时</button>
+            </div>
+            <div id="sync-status" class="field-note" data-i18n="syncIntro">若电脑时间不准，可让系统联网校准（需要管理员 / root 权限）。</div>
+            <label><span data-i18n="autoTimeSync">启动时自动校时</span>
+              <input id="pref-auto-timesync" type="checkbox" class="dc-switch">
+            </label>
+            <div class="field-note" data-i18n="syncNote">校时调用操作系统自带的时间服务，不会修改本程序之外的任何数据。</div>
+          </div>
 
-    <label><span data-i18n="scale">大小</span>
-      <input id="pref-scale" type="range" min="0.5" max="2.5" step="0.05" value="1">
-    </label>
-    <div class="scale-value"><output id="scale-out">100%</output><span data-i18n="resizeTip">拖动右下角也可调整</span></div>
+          <div class="card">
+            <div class="card-title" data-i18n="grpExtraClocks">多时区时钟</div>
+            <div class="field-note" data-i18n="extraClockNote">同一程序、单个实例下可打开多个独立时钟窗口，各自显示不同时区。</div>
+            <div class="extra-editor">
+              <input id="extra-label" type="text" class="dc-input" placeholder="名称，如 纽约" maxlength="16">
+              <select id="extra-zone" class="dc-select"></select>
+              <button id="extra-add" class="dc-btn tiny" type="button" data-i18n="extraAdd">＋ 打开窗口</button>
+            </div>
+            <div id="extra-list" class="extra-list"></div>
+          </div>
+        </section>
 
-    <label><span data-i18n="opacity">不透明度</span>
-      <input id="pref-opacity" type="range" min="0.3" max="1" step="0.05" value="1">
-    </label>
+        <!-- ============================ 权限 ============================ -->
+        <section class="panel" data-panel="permission">
+          <div class="card">
+            <div class="card-title" data-i18n="permTitle">权限与启动</div>
+            <div id="perm-status" class="perm-status" data-i18n="permChecking">正在检查权限…</div>
+            <div id="perm-note" class="perm-note"></div>
+            <label id="perm-admin-row" class="perm-row" hidden><span data-i18n="permAdmin">始终以管理员身份启动</span>
+              <input id="perm-run-admin" type="checkbox" class="dc-switch">
+            </label>
+            <div class="perm-note" data-i18n="permAdminNote">勾选后，下次手动启动以及开机自启都会自动向 Windows 请求管理员权限（UAC 提示由系统弹出）；取消勾选即恢复普通权限。</div>
+            <button id="perm-elevate-now" class="dc-btn perm-btn" type="button" hidden data-i18n="permElevateNow">立即以管理员身份重启</button>
+            <button id="perm-quit" class="dc-btn perm-btn danger" type="button" hidden data-i18n="permQuit">退出程序</button>
+          </div>
+        </section>
 
-    <div class="settings-sep" data-i18n="alarmTitle">闹钟</div>
-    <div class="alarm-editor">
-      <select id="alarm-hour" aria-label="小时"></select>
-      <span class="alarm-colon">:</span>
-      <select id="alarm-minute" aria-label="分钟"></select>
-      <label class="inline"><input id="alarm-repeat" type="checkbox" checked><span data-i18n="alarmRepeat">每天</span></label>
-      <button id="alarm-add" type="button" data-i18n="alarmAdd">添加</button>
-    </div>
-    <div id="alarm-list" class="alarm-list"></div>
+        <!-- ============================ 关于 ============================ -->
+        <section class="panel" data-panel="about">
+          <div class="card">
+            <div class="card-title" data-i18n="donateTitle">支持作者</div>
+            <div class="donate-note" data-i18n="donateNote">如果这个小工具有帮到你，欢迎请作者喝杯咖啡 ☕（完全自愿）</div>
+            <button id="donate-toggle" class="dc-btn primary" type="button" data-i18n="donateToggle">请作者喝咖啡</button>
+            <div id="donate-panel" class="donate-panel" hidden>
+              <div class="donate-tabs">
+                <button type="button" class="donate-tab active" data-donate="wechat" data-i18n="donateWechat">微信支付</button>
+                <button type="button" class="donate-tab" data-donate="alipay" data-i18n="donateAlipay">支付宝</button>
+              </div>
+              <div class="donate-qr"><img id="donate-img" src="assets/donate-wechat.jpg" alt="收款码"></div>
+              <div class="donate-foot" data-i18n="donateFoot">截图 / 长按后扫码 · 感谢你的支持</div>
+            </div>
+          </div>
 
-    <div class="settings-sep" data-i18n="shutdownTitle">定时关机</div>
-    <div class="shutdown-editor">
-      <input id="shutdown-min" type="number" min="1" max="1440" step="1" value="60">
-      <span class="unit" data-i18n="minutes">分钟</span>
-      <button id="shutdown-start" type="button" data-i18n="shutdownStart">启动</button>
-      <button id="shutdown-cancel" type="button" hidden data-i18n="shutdownCancel">取消</button>
-    </div>
-    <div id="shutdown-status" class="shutdown-status" data-i18n="shutdownOff">未启用</div>
-    <div class="shutdown-warn" data-i18n="shutdownWarn">到点将关闭计算机，请先保存工作；可随时取消。</div>
+          <div class="card">
+            <div class="card-title" data-i18n="grpProject">项目与更新</div>
+            <button id="project-link" class="dc-btn link" type="button">↗ GitHub · xiaoqiangclub/desk-clock</button>
+            <div class="update-row">
+              <button id="check-update" class="dc-btn tiny" type="button" data-i18n="checkUpdate">检查更新</button>
+              <a id="download-update" class="dc-btn tiny" hidden data-i18n="goDownload">下载新版本</a>
+              <span id="update-status" class="field-note"></span>
+            </div>
+            <div class="about-meta"><span>Desk Clock</span><span id="about-version"></span><span>MIT · 开源免费</span></div>
+          </div>
 
-    <div class="settings-sep" data-i18n="permTitle">权限与启动</div>
-    <div id="perm-status" class="perm-status" data-i18n="permChecking">正在检查权限…</div>
-    <div id="perm-note" class="perm-note"></div>
-    <label id="perm-admin-row" class="perm-row" hidden><span data-i18n="permAdmin">始终以管理员身份启动</span>
-      <input id="perm-run-admin" type="checkbox">
-    </label>
-    <div class="perm-note" data-i18n="permAdminNote">勾选后，下次手动启动以及开机自启都会自动向 Windows 请求管理员权限（UAC 提示由系统弹出）；取消勾选即恢复普通权限。</div>
-    <button id="perm-elevate-now" class="settings-done perm-btn" type="button" hidden data-i18n="permElevateNow">立即以管理员身份重启</button>
-    <button id="perm-quit" class="settings-done perm-btn" type="button" hidden data-i18n="permQuit">退出程序</button>
+          <div class="card">
+            <button id="reset-defaults" class="dc-btn reset" type="button" data-i18n="resetDefaults">一键还原默认（Alt+R）</button>
+            <button id="settings-close-2" class="dc-btn ghost" type="button" data-i18n="close">关闭</button>
+          </div>
+        </section>
 
-    <div class="settings-sep" data-i18n="donateTitle">打赏支持</div>
-    <div class="donate-note" data-i18n="donateNote">如果这个小工具有帮到你，欢迎请作者喝杯咖啡 ☕（完全自愿）</div>
-    <button id="donate-toggle" class="settings-done donate-btn" type="button" data-i18n="donateToggle">查看收款码</button>
-    <div id="donate-panel" class="donate-panel" hidden>
-      <div class="donate-tabs">
-        <button type="button" class="donate-tab active" data-donate="wechat" data-i18n="donateWechat">微信支付</button>
-        <button type="button" class="donate-tab" data-donate="alipay" data-i18n="donateAlipay">支付宝</button>
       </div>
-      <div class="donate-qr"><img id="donate-img" src="assets/donate-wechat.jpg" alt="收款码"></div>
-      <div class="donate-foot" data-i18n="donateFoot">长按 / 截图后扫码 · 感谢你的支持</div>
     </div>
-
-    <button id="reset-defaults" class="settings-done reset" type="button" data-i18n="resetDefaults">一键还原默认（Alt+R）</button>
-    <button id="settings-close-2" class="settings-done" type="button" data-i18n="close">关闭</button>
   </div>
 
   <div id="resize-handle" title="拖动调整大小" aria-label="拖动调整大小"></div>
@@ -161,8 +306,9 @@
       <button id="alarm-toast-close" type="button" aria-label="关闭">&times;</button></div>
     <div id="alarm-toast-body" class="alarm-toast-body"></div>
     <div class="alarm-toast-actions">
-      <button id="alarm-snooze" type="button" data-i18n="alarmSnooze">稍后提醒（5 分钟）</button>
-      <button id="alarm-dismiss" type="button" data-i18n="alarmDismiss">知道了</button>
+      <button id="alarm-mute" class="dc-btn tiny ghost" type="button" data-i18n="alarmMute">静音</button>
+      <button id="alarm-snooze" class="dc-btn tiny" type="button" data-i18n="alarmSnooze">稍后提醒</button>
+      <button id="alarm-dismiss" class="dc-btn tiny primary" type="button" data-i18n="alarmDismiss">知道了</button>
     </div>
   </div>
 </div>

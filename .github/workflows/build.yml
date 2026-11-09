@@ -33,8 +33,16 @@ jobs:
       - name: Static checks
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/verify.py scripts/verify_features.py scripts/verify_v03.py
+          python3 -m py_compile scripts/verify.py scripts/verify_features.py scripts/verify_v03.py scripts/verify_v04.py
           bash -n scripts/dev.sh scripts/build.sh scripts/preview.sh
+          node --check ui/app.js
+          node --check ui/prefs.js
+          node --check ui/alarm.js
+          node --check ui/clock.js
+          node --check ui/i18n.js
+          node --check ui/flip.js
+          node --check ui/fonts.js
+          python3 -c "import json; json.load(open('src-tauri/tauri.conf.json')); json.load(open('src-tauri/capabilities/default.json'))"
           test -f ui/index.html
           test -f src-tauri/tauri.conf.json
           test -f ui/assets/donate-wechat.jpg

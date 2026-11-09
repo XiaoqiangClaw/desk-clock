@@ -13,9 +13,30 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
+  var APP_VERSION = '0.4.0';
+  var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
+  var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
   var STYLES = ['flip', 'minimal', 'neon', 'eink', 'segment', 'typewriter', 'glass', 'analog'];
   var BACKDROPS = ['none', 'blur', 'dim', 'light'];
+
+  // v0.4: 常用时区（固定 UTC 偏移，分钟；明确不含夏令时，界面有说明）
+  var ZONES = [
+    { label: 'UTC-10 夏威夷', offset: -600 },
+    { label: 'UTC-8  洛杉矶', offset: -480 },
+    { label: 'UTC-7  丹佛', offset: -420 },
+    { label: 'UTC-6  芝加哥', offset: -360 },
+    { label: 'UTC-5  纽约', offset: -300 },
+    { label: 'UTC+0  伦敦', offset: 0 },
+    { label: 'UTC+1  巴黎/柏林', offset: 60 },
+    { label: 'UTC+3  莫斯科', offset: 180 },
+    { label: 'UTC+4  迪拜', offset: 240 },
+    { label: 'UTC+5:30 印度', offset: 330 },
+    { label: 'UTC+8  北京/新加坡', offset: 480 },
+    { label: 'UTC+9  东京', offset: 540 },
+    { label: 'UTC+10 悉尼', offset: 600 },
+    { label: 'UTC+12 奥克兰', offset: 720 }
+  ];
 
   var app = document.getElementById('app');
   var clockEl = document.getElementById('clock');
@@ -28,27 +49,48 @@
   var builtStyle = null;
   var builtPartsKey = '';
   var lastAlarmKey = '';
-  var shutdownTarget = null;
-
-  // v0.3 dual-view: the SAME index.html serves the clock window and the
-  // independent settings window. Only the latter gets this flag (injected by
-  // Rust before any page script). Browser preview keeps the embedded panel.
-  var isSettingsWindow = window.__DC_VIEW__ === 'settings';
-  var settings = document.getElementById('settings');
-  var isOwnPanel = !isSettingsWindow;
+  var timerTarget = null;   // {label, action}
   var privStatus = null;
+
+  // v0.3 dual-view + v0.4 extra clock windows.
+  // __DC_VIEW__ === 'settings' -> independent settings window.
+  // __DC_EXTRA__ === 1        -> an extra timezone clock window.
+  var isSettingsWindow = window.__DC_VIEW__ === 'settings';
+  var isExtraWindow = !!window.__DC_EXTRA__;
+  var tzOffset = (typeof window.__DC_TZ_OFFSET__ === 'number') ? window.__DC_TZ_OFFSET__ : null;
+  var tzLabel = window.__DC_TZ_LABEL__ || '';
+
+  var settings = document.getElementById('settings');
 
   if (isSettingsWindow) {
     document.body.setAttribute('data-view', 'settings');
     document.title = 'Desk Clock · 设置';
     settings.hidden = false;
+  } else if (isExtraWindow) {
+    document.body.setAttribute('data-view', 'extra');
+    document.title = 'Desk Clock · ' + (tzLabel || '时区时钟');
+    // 额外窗口不显示齿轮/缩放柄/设置面板（设置是全局唯一窗口）
+    if (gear) gear.style.display = 'none';
+    var rh0 = document.getElementById('resize-handle');
+    if (rh0) rh0.style.display = 'none';
   }
 
   function byId(id) { return document.getElementById(id); }
+  function STRINGS_LANG() { return (state && state.lang) || 'zh-CN'; }
 
   function effectiveColor() {
     if (state.color === CUSTOM) return state.customColor;
     return state.color || '';
+  }
+
+  // v0.4 多时区：构造一个「本地 getter 返回目标墙上时间」的 Date。
+  // display UTC = UTC + targetOffset；而本地 getter = UTC + localOffset，
+  // 因此把 epoch 平移 (targetOffset - localOffset) 即可。
+  // getTimezoneOffset() = UTC - local（分钟），故 localOffset = -getTimezoneOffset()。
+  function displayNow() {
+    var now = new Date();
+    if (tzOffset === null) return now;
+    return new Date(now.getTime() + (tzOffset + now.getTimezoneOffset()) * 60000);
   }
 
   function applyRoot() {
@@ -58,11 +100,24 @@
     state.backdrop = backdrop;
     app.setAttribute('data-style', style);
     app.setAttribute('data-backdrop', backdrop);
+    app.setAttribute('data-show-sep', String(!!state.showSeparator));
+    app.setAttribute('data-analog-theme', state.analogTheme === 'light' ? 'light' : 'dark');
+    app.setAttribute('data-analog-penetrate', String(!!state.analogPenetrate));
+
     var sc = Number(state.scale) || 1;
     app.style.setProperty('--dc-scale', String(sc));
-    app.style.opacity = String(Number(state.opacity));
 
-    // Custom font/colour override the per-style RECOMMENDED defaults.
+    // 🔴 关键修复：不透明度只作用于时钟窗口，设置窗口永远清晰。
+    // 浏览器预览里设置面板是 #app 的子元素，同样不应被半透明化，
+    // 因此仅在「纯时钟窗口」（非设置窗口、且设置面板未打开）应用 opacity。
+    if (isSettingsWindow) {
+      app.style.removeProperty('opacity');
+    } else if (!isOwnPanelOpen()) {
+      app.style.opacity = String(Number(state.opacity));
+    } else {
+      app.style.removeProperty('opacity');
+    }
+
     var font = Fonts.fontStack(state);
     if (font) app.style.setProperty('--dc-font', font);
     else app.style.removeProperty('--dc-font');
@@ -79,12 +134,17 @@
     if (out) out.textContent = Math.round(sc * 100) + '%';
     I18n.apply(state.lang);
     if (isSettingsWindow) document.title = state.lang === 'en' ? 'Desk Clock · Settings' : 'Desk Clock · 设置';
+    var vb = byId('ver-badge'); if (vb) vb.textContent = 'v' + APP_VERSION;
+    var av = byId('about-version'); if (av) av.textContent = APP_VERSION;
   }
 
-  // Only the clock window may resize the CLOCK window. The settings window
-  // must never call this (Rust resolves "main" itself, but skip the traffic).
+  function isOwnPanelOpen() {
+    // 浏览器预览的嵌入式面板打开时，不应用窗口透明度（否则设置也跟着透明）
+    return !isSettingsWindow && !isExtraWindow && settings && !settings.hidden;
+  }
+
   function setWindowSize(scale) {
-    if (!Prefs.isNative || isSettingsWindow) return;
+    if (!Prefs.isNative || isSettingsWindow || isExtraWindow) return;
     var core = window.__TAURI__ && window.__TAURI__.core;
     if (!core || typeof core.invoke !== 'function') return;
     core.invoke('set_window_size', { width: BASE_W * scale, height: BASE_H * scale })
@@ -92,10 +152,11 @@
   }
 
   // ------------------------------------------- cross-window preference sync
-  // Rust is authoritative: its broadcast carries the full merged object.
-  // We apply it WITHOUT saving (that would create a write-back loop).
   function applyRemotePrefs(next) {
-    var rebuild = next.style !== state.style || next.showSeconds !== state.showSeconds;
+    var rebuild = next.style !== state.style ||
+      next.showSeconds !== state.showSeconds ||
+      next.hour12 !== state.hour12 ||
+      next.analogTheme !== state.analogTheme;
     state = Prefs.normalize(next);
     applyRoot();
     if (engine) {
@@ -106,7 +167,7 @@
     }
     syncControls();
     if (rebuild && engine && !isSettingsWindow) {
-      var now = new Date();
+      var now = displayNow();
       ensureDom(engine.buildParts(now), true);
       renderFrame({ parts: engine.buildParts(now), now: now });
     }
@@ -131,9 +192,7 @@
       row.hidden = true; nowBtn.hidden = true; quitBtn.hidden = true;
       return;
     }
-    var labels = {
-      windows: 'Windows', macos: 'macOS', linux: 'Linux', browser: '浏览器预览', unknown: '未知'
-    };
+    var labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux', browser: '浏览器预览', unknown: '未知' };
     box.className = 'perm-status ' + (s.isElevated ? 'elevated' : 'standard');
     box.textContent = (labels[s.platform] || s.platform) + ' · ' +
       (s.isElevated
@@ -152,12 +211,27 @@
 
   function loadPrivilege() {
     Prefs.privilegeStatus().then(function (s) {
-      privStatus = s;
-      renderPrivilege();
+      privStatus = s; renderPrivilege();
     });
   }
 
-  // ---------------------------------------------------------- donate section
+  // ---------------------------------------------------------- tabs (v0.4)
+  function bindTabs() {
+    var tabs = document.querySelectorAll('#settings-tabs .tab');
+    if (!tabs.length) return;
+    function activate(name) {
+      for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
+      var panels = document.querySelectorAll('#settings-panels .panel');
+      for (var j = 0; j < panels.length; j++) panels[j].classList.toggle('active', panels[j].getAttribute('data-panel') === name);
+      var box = byId('settings-panels'); if (box) box.scrollTop = 0;
+    }
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener('click', function () { activate(this.getAttribute('data-tab')); });
+    }
+    activate('appearance');
+  }
+
+  // ---------------------------------------------------------- donate/about
   function showDonatePanel() {
     var panel = byId('donate-panel');
     var btn = byId('donate-toggle');
@@ -165,22 +239,86 @@
     if (!panel || !btn) return;
     panel.hidden = false;
     btn.textContent = I18n.t(L, 'donateHide');
-    panel.scrollIntoView({ block: 'nearest' });
+    // 独立窗口需先切到「关于」Tab 才能看到
+    if (isSettingsWindow) {
+      var aboutTab = document.querySelector('#settings-tabs .tab[data-tab="about"]');
+      if (aboutTab) aboutTab.click();
+    }
+    try { panel.scrollIntoView({ block: 'nearest' }); } catch (e) {}
   }
 
   function setDonateTab(which) {
     var img = byId('donate-img');
-    if (img) img.src = which === 'alipay'
-      ? 'assets/donate-alipay.jpg' : 'assets/donate-wechat.jpg';
+    if (img) img.src = which === 'alipay' ? 'assets/donate-alipay.jpg' : 'assets/donate-wechat.jpg';
     var tabs = document.querySelectorAll('.donate-tab');
-    for (var i = 0; i < tabs.length; i++) {
-      tabs[i].classList.toggle('active', tabs[i].getAttribute('data-donate') === which);
-    }
+    for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-donate') === which);
   }
 
-  // ------------------------------------------------------------- extra binds
+  function setUpdateStatus(text) {
+    var el = byId('update-status'); if (el) el.textContent = text;
+  }
+
+  function semverNewer(a, b) {
+    function parts(v) { return String(v || '').replace(/^v/, '').split('.').map(function (x) { return parseInt(x, 10) || 0; }); }
+    var A = parts(a), B = parts(b);
+    for (var i = 0; i < 3; i++) { if ((A[i] || 0) > (B[i] || 0)) return true; if ((A[i] || 0) < (B[i] || 0)) return false; }
+    return false;
+  }
+
+  function checkUpdate(manual) {
+    var L = STRINGS_LANG();
+    if (manual) setUpdateStatus(I18n.t(L, 'updateChecking'));
+    var dl = byId('download-update'); if (dl) dl.hidden = true;
+    return Prefs.checkUpdate().then(function (info) {
+      var latest = info && info.latest ? String(info.latest).replace(/^v/, '') : '';
+      if (!latest) { if (manual) setUpdateStatus(I18n.t(L, 'updateFail').replace('%s', 'no data')); return; }
+      if (semverNewer(latest, APP_VERSION)) {
+        setUpdateStatus(I18n.t(L, 'updateFound').replace('%s', 'v' + latest));
+        if (dl) { dl.hidden = false; dl.dataset.link = 'releases'; }
+      } else {
+        setUpdateStatus(I18n.t(L, 'updateLatest').replace('%s', 'v' + APP_VERSION));
+      }
+    }).catch(function (err) {
+      if (manual) setUpdateStatus(I18n.t(L, 'updateFail').replace('%s', String(err || 'failed')));
+    });
+  }
+
+  // ------------------------------------------- multi-timezone extra windows
+  function renderExtraList() {
+    var box = byId('extra-list');
+    if (!box) return;
+    var L = STRINGS_LANG();
+    box.textContent = '';
+    var list = state.extraClocks || [];
+    if (!list.length) {
+      var empty = document.createElement('div');
+      empty.className = 'alarm-empty';
+      empty.textContent = I18n.t(L, 'extraEmpty');
+      box.appendChild(empty);
+      return;
+    }
+    list.forEach(function (c) {
+      var row = document.createElement('div');
+      row.className = 'extra-row';
+      var span = document.createElement('span');
+      span.textContent = c.label + '  (UTC' + (c.offset >= 0 ? '+' : '') + (c.offset / 60) + ')';
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'extra-del'; btn.textContent = '×';
+      btn.title = '关闭';
+      btn.addEventListener('click', function () {
+        var next = (state.extraClocks || []).filter(function (x) { return x.id !== c.id; });
+        changed({ extraClocks: next });
+        if (Prefs.isNative) Prefs.closeClockWindow(c.id).catch(function () {});
+      });
+      row.appendChild(span); row.appendChild(btn);
+      box.appendChild(row);
+    });
+  }
+
+  // ---------------------------------------------------------- extra binds
   function bindExtras() {
-    // Tray hint: only meaningful in the real native app.
+    bindTabs();
+
     var hint = byId('tray-hint');
     if (hint) hint.hidden = !Prefs.isNative;
 
@@ -189,27 +327,20 @@
       var wanted = e.target.checked;
       e.target.disabled = true;
       Prefs.setRunAsAdmin(wanted).then(function (s) {
-        privStatus = s;
-        state.runAsAdmin = !!s.runAsAdmin;
-        renderPrivilege();
-        e.target.disabled = false;
+        privStatus = s; state.runAsAdmin = !!s.runAsAdmin;
+        renderPrivilege(); e.target.disabled = false;
       }).catch(function (err) {
-        e.target.checked = !wanted;
-        e.target.disabled = false;
-        var b = byId('perm-status');
-        if (b) b.textContent = String(err || 'failed');
+        e.target.checked = !wanted; e.target.disabled = false;
+        var b = byId('perm-status'); if (b) b.textContent = String(err || 'failed');
       });
     });
     byId('perm-elevate-now').addEventListener('click', function () {
-      var b = this;
-      b.disabled = true;
+      var b = this; b.disabled = true;
       var L = STRINGS_LANG();
       b.textContent = L === 'en' ? 'Requesting…' : '正在请求授权…';
       Prefs.restartElevated().catch(function (err) {
-        b.disabled = false;
-        b.textContent = I18n.t(L, 'permElevateNow');
-        var s = byId('perm-status');
-        if (s) s.textContent = String(err || 'failed');
+        b.disabled = false; b.textContent = I18n.t(L, 'permElevateNow');
+        var s = byId('perm-status'); if (s) s.textContent = String(err || 'failed');
       });
     });
     byId('perm-quit').addEventListener('click', function () { Prefs.quitApp(); });
@@ -218,7 +349,7 @@
     byId('donate-toggle').addEventListener('click', function () {
       var panel = byId('donate-panel');
       var L = STRINGS_LANG();
-      if (panel.hidden) { showDonatePanel(); }
+      if (panel.hidden) showDonatePanel();
       else { panel.hidden = true; this.textContent = I18n.t(L, 'donateToggle'); }
     });
     (function () {
@@ -228,17 +359,94 @@
       }
     })();
 
-    // Rust-side tray "donate" intent: survive first-window creation race and
-    // also react to a live emit when the window already exists.
+    // Project link + update check
+    byId('project-link').addEventListener('click', function () {
+      Prefs.openUrl(PROJECT_URL).catch(function () { /* browser preview: no-op */ });
+    });
+    byId('check-update').addEventListener('click', function () { checkUpdate(true); });
+    (function () {
+      var dl = byId('download-update');
+      if (dl) dl.addEventListener('click', function (e) {
+        e.preventDefault();
+        Prefs.openUrl(RELEASES_URL).catch(function () {});
+      });
+    })();
+    // 自动检查（静默）：只在独立设置窗口启动时跑一次
+    if (isSettingsWindow && Prefs.isNative) checkUpdate(false);
+
+    // Rust-side tray "donate" intent
     Prefs.listen('show-donate', showDonatePanel);
     if (Prefs.isNative) {
       var core = window.__TAURI__ && window.__TAURI__.core;
       if (core && typeof core.invoke === 'function') {
-        core.invoke('take_donate_intent').then(function (v) {
-          if (v) showDonatePanel();
-        }).catch(function () {});
+        core.invoke('take_donate_intent').then(function (v) { if (v) showDonatePanel(); }).catch(function () {});
       }
     }
+
+    // Quick position grid
+    (function () {
+      var btns = document.querySelectorAll('#pos-grid button');
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].addEventListener('click', function () {
+          var pos = this.getAttribute('data-pos');
+          if (!Prefs.isNative) return;
+          Prefs.presetPosition(pos).catch(function () {});
+        });
+      }
+    })();
+
+    // Alarm sound test
+    byId('alarm-test-sound').addEventListener('click', function () { Alarm.startRing(); setTimeout(function () { Alarm.stopRing(); }, 1600); });
+
+    // Time sync
+    (function () {
+      var clockLabel = byId('sync-clock');
+      function tick() {
+        if (!clockLabel) return;
+        clockLabel.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      }
+      tick(); setInterval(tick, 1000);
+    })();
+    byId('sync-now').addEventListener('click', function () {
+      var L = STRINGS_LANG();
+      var st = byId('sync-status');
+      if (!Prefs.isNative) { if (st) st.textContent = I18n.t(L, 'syncUnsupported'); return; }
+      Prefs.syncSystemTime().then(function (msg) {
+        if (st) st.textContent = msg ? String(msg) : I18n.t(L, 'syncOk');
+      }).catch(function (err) {
+        if (st) st.textContent = I18n.t(L, 'syncFail').replace('%s', String(err || 'failed'));
+      });
+    });
+
+    // Extra timezone windows
+    (function () {
+      var sel = byId('extra-zone');
+      if (sel) {
+        ZONES.forEach(function (z) {
+          var o = document.createElement('option');
+          o.value = String(z.offset); o.textContent = z.label;
+          sel.appendChild(o);
+        });
+        sel.value = '0';
+      }
+      byId('extra-add').addEventListener('click', function () {
+        var labelEl = byId('extra-label');
+        var label = (labelEl.value || '').trim() || (sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : 'Clock');
+        var offset = Number(sel.value) || 0;
+        var list = (state.extraClocks || []).slice();
+        var id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        list.push({ id: id, label: label, offset: offset });
+        changed({ extraClocks: list });
+        labelEl.value = '';
+        if (Prefs.isNative) Prefs.addClockWindow(id, label, offset).catch(function () {});
+        else {
+          var st = document.createElement('div');
+          st.className = 'field-note';
+          st.textContent = I18n.t(STRINGS_LANG(), 'extraBrowserOnly');
+          var box = byId('extra-list'); if (box) box.appendChild(st);
+        }
+      });
+    })();
 
     loadPrivilege();
   }
@@ -251,10 +459,7 @@
 
   function clearClock() {
     while (clockEl.firstChild) clockEl.removeChild(clockEl.firstChild);
-    slots = {};
-    analog = null;
-    builtPartsKey = '';
-    builtStyle = null;
+    slots = {}; analog = null; builtPartsKey = ''; builtStyle = null;
   }
 
   function buildDigital(parts) {
@@ -274,10 +479,8 @@
         slot.flip.set(p.value, false);
       } else {
         span = document.createElement('span');
-        span.className = 'glyph';
-        span.textContent = p.value;
-        slot.appendChild(span);
-        slot.glyph = span;
+        span.className = 'glyph'; span.textContent = p.value;
+        slot.appendChild(span); slot.glyph = span;
       }
       clockEl.appendChild(slot);
       slots[p.key] = slot;
@@ -288,13 +491,20 @@
 
   function buildAnalog(parts) {
     clockEl.className = 'analog';
-    var i, tick, dial = document.createElement('div');
+    var i, tick, num, dial = document.createElement('div');
     dial.className = 'analog-dial';
-    for (i = 0; i < 12; i++) {
+    for (i = 0; i < 60; i++) {
       tick = document.createElement('div');
-      tick.className = 'analog-tick' + (i % 3 === 0 ? ' major' : '');
-      tick.style.transform = 'rotate(' + (i * 30) + 'deg)';
+      tick.className = 'analog-tick' + (i % 5 === 0 ? ' major' : '');
+      tick.style.setProperty('--a', (i * 6) + 'deg');
       dial.appendChild(tick);
+    }
+    for (i = 1; i <= 12; i++) {
+      num = document.createElement('div');
+      num.className = 'analog-num';
+      num.textContent = String(i);
+      num.style.setProperty('--rot', (i * 30) + 'deg');
+      dial.appendChild(num);
     }
     var hour = document.createElement('div'); hour.className = 'hand hour';
     var minute = document.createElement('div'); minute.className = 'hand minute';
@@ -332,8 +542,7 @@
 
     var i, p, slot;
     for (i = 0; i < parts.length; i++) {
-      p = parts[i];
-      slot = slots[p.key];
+      p = parts[i]; slot = slots[p.key];
       if (!slot || p.type !== 'digit') continue;
       if (state.style === 'flip') {
         if (slot.flip) slot.flip.set(p.value, engine.animate);
@@ -345,15 +554,17 @@
 
   function onTick(payload) {
     renderFrame(payload);
-    maybeFireAlarms(payload.now);
+    if (!isSettingsWindow && !isExtraWindow) maybeFireAlarms(payload.now);
   }
 
   function maybeFireAlarms(now) {
     if (Alarm.isFiring()) return;
-    var hm = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+    // 闹钟按本机时间触发（额外时区窗口不触发）
+    var local = new Date();
+    var hm = ('0' + local.getHours()).slice(-2) + ':' + ('0' + local.getMinutes()).slice(-2);
     var hits = (state.alarms || []).filter(function (a) { return a.time === hm; });
     if (!hits.length) { lastAlarmKey = ''; return; }
-    var key = hm + '|' + now.toDateString() + '|' + hits.map(function (a) { return a.id; }).join(',');
+    var key = hm + '|' + local.toDateString() + '|' + hits.map(function (a) { return a.id; }).join(',');
     if (key === lastAlarmKey) return;
     lastAlarmKey = key;
     var remaining = (state.alarms || []).filter(function (a) { return a.repeat || a.time !== hm; });
@@ -370,11 +581,10 @@
     byId('alarm-toast-body').textContent = I18n.t(L, 'alarmMsg').replace('%s', text);
     toast.hidden = false;
     Alarm.setFiring(true);
+    if (state.alarmSound) Alarm.startRing();
     try {
       var AC = window.__TAURI__ && window.__TAURI__.webviewWindow;
-      if (AC && AC.getCurrentWebviewWindow) {
-        AC.getCurrentWebviewWindow().setFocus().catch(function () {});
-      }
+      if (AC && AC.getCurrentWebviewWindow) AC.getCurrentWebviewWindow().setFocus().catch(function () {});
     } catch (e) { /* ignore */ }
   }
 
@@ -382,9 +592,8 @@
     var toast = byId('alarm-toast');
     if (toast) toast.hidden = true;
     Alarm.setFiring(false);
+    Alarm.stopRing();
   }
-
-  function STRINGS_LANG() { return (state && state.lang) || 'zh-CN'; }
 
   function renderAlarmList() {
     var box = byId('alarm-list');
@@ -394,35 +603,36 @@
     (state.alarms || []).forEach(function (a) {
       var row = document.createElement('div');
       row.className = 'alarm-row';
-      var span = document.createElement('span');
-      span.textContent = a.time + (a.repeat ? ' · ' + I18n.t(L, 'alarmRepeat') : '');
+      var info = document.createElement('span');
+      info.className = 'alarm-info';
+      var t = document.createElement('span'); t.className = 'alarm-time-text'; t.textContent = a.time;
+      var tag = document.createElement('span'); tag.className = 'alarm-tag'; tag.textContent = I18n.t(L, 'alarmRepeat');
+      info.appendChild(t); if (a.repeat) info.appendChild(tag);
       var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = I18n.t(L, 'alarmRemove');
+      btn.type = 'button'; btn.className = 'alarm-del'; btn.textContent = '×'; btn.title = I18n.t(L, 'alarmRemove');
       btn.addEventListener('click', function () {
         state.alarms = (state.alarms || []).filter(function (x) { return x.id !== a.id; });
         Prefs.save({ alarms: state.alarms });
         renderAlarmList();
       });
-      row.appendChild(span); row.appendChild(btn);
+      row.appendChild(info); row.appendChild(btn);
       box.appendChild(row);
     });
     if (!(state.alarms || []).length) {
       var empty = document.createElement('div');
-      empty.className = 'alarm-empty';
-      empty.textContent = '—';
+      empty.className = 'alarm-empty'; empty.textContent = '—';
       box.appendChild(empty);
     }
   }
 
-  function updateShutdownUI() {
+  function updateTimerUI() {
     var L = STRINGS_LANG();
     var status = byId('shutdown-status');
     var startBtn = byId('shutdown-start');
     var cancelBtn = byId('shutdown-cancel');
     if (!status) return;
-    if (shutdownTarget) {
-      status.textContent = I18n.t(L, 'shutdownAt').replace('%s', shutdownTarget);
+    if (timerTarget) {
+      status.textContent = I18n.t(L, timerTarget.action === 'reboot' ? 'rebootAt' : 'shutdownAt').replace('%s', timerTarget.label);
       startBtn.hidden = true; cancelBtn.hidden = false;
     } else {
       status.textContent = I18n.t(L, 'shutdownOff');
@@ -441,34 +651,46 @@
     byId('pref-color-custom').value = state.customColor || '#f6f7f9';
     byId('pref-seconds').checked = !!state.showSeconds;
     byId('pref-hour12').checked = !!state.hour12;
+    byId('pref-separator').checked = !!state.showSeparator;
     byId('pref-ontop').checked = !!state.alwaysOnTop;
     byId('pref-autostart').checked = !!state.autostart;
     byId('pref-backdrop').value = state.backdrop;
     byId('pref-scale').value = String(state.scale);
     byId('pref-opacity').value = String(state.opacity);
+    byId('pref-analog-theme').value = state.analogTheme;
+    byId('analog-theme-row').hidden = state.style !== 'analog';
+    byId('pref-clickthrough').checked = !!state.clickThrough;
+    byId('pref-alarm-sound').checked = !!state.alarmSound;
+    byId('shutdown-action').value = state.timerAction;
+    byId('shutdown-mode').value = state.timerMode;
+    byId('shutdown-duration-row').hidden = state.timerMode !== 'duration';
+    byId('shutdown-clock-row').hidden = state.timerMode !== 'clock';
+    byId('pref-auto-timesync').checked = !!state.autoTimeSync;
     var out = byId('scale-out');
     if (out) out.textContent = Math.round((Number(state.scale) || 1) * 100) + '%';
     renderAlarmList();
-    updateShutdownUI();
+    renderExtraList();
+    updateTimerUI();
   }
 
   function changed(patch, opts) {
     var k;
-    for (k in patch) {
-      if (Object.prototype.hasOwnProperty.call(patch, k)) state[k] = patch[k];
-    }
+    for (k in patch) if (Object.prototype.hasOwnProperty.call(patch, k)) state[k] = patch[k];
     Prefs.save(patch);
     applyRoot();
 
-    engine.setOptions({
-      showSeconds: state.showSeconds,
-      hour12: state.hour12,
-      animate: state.style === 'flip'
-    });
+    if (engine) {
+      engine.setOptions({
+        showSeconds: state.showSeconds, hour12: state.hour12,
+        animate: state.style === 'flip'
+      });
+    }
     if (patch.scale !== undefined) setWindowSize(state.scale);
     if (patch.lang !== undefined) { syncControls(); renderPrivilege(); }
-    if (opts && opts.rebuild) {
-      var now = new Date();
+    if (patch.style !== undefined && byId('analog-theme-row')) byId('analog-theme-row').hidden = state.style !== 'analog';
+    if (patch.clickThrough !== undefined && Prefs.isNative) Prefs.setClickThrough(!!patch.clickThrough).catch(function () {});
+    if (opts && opts.rebuild && engine) {
+      var now = displayNow();
       var parts = engine.buildParts(now);
       ensureDom(parts, true);
       renderFrame({ parts: parts, now: now });
@@ -478,9 +700,6 @@
 
   function resetDefaults() {
     var fresh = JSON.parse(JSON.stringify(Prefs.DEFAULTS));
-    // Keep the user's chosen language, window position and the Windows
-    // "always run as admin" choice across a reset — the RUNASADMIN layer
-    // would stay in the registry, so the UI must not pretend it was undone.
     fresh.lang = state.lang;
     fresh.x = state.x; fresh.y = state.y;
     fresh.runAsAdmin = !!state.runAsAdmin;
@@ -488,14 +707,14 @@
     Prefs.save(fresh);
     applyRoot();
     setWindowSize(state.scale);
-    engine.setOptions({
-      showSeconds: state.showSeconds, hour12: state.hour12,
-      animate: state.style === 'flip'
-    });
-    var now = new Date();
-    var parts = engine.buildParts(now);
-    ensureDom(parts, true);
-    renderFrame({ parts: parts, now: now });
+    if (engine) engine.setOptions({ showSeconds: state.showSeconds, hour12: state.hour12, animate: state.style === 'flip' });
+    if (Prefs.isNative) Prefs.setClickThrough(false).catch(function () {});
+    if (!isSettingsWindow && engine) {
+      var now = displayNow();
+      var parts = engine.buildParts(now);
+      ensureDom(parts, true);
+      renderFrame({ parts: parts, now: now });
+    }
     syncControls();
     var gearBtn = byId('gear');
     if (gearBtn) {
@@ -506,89 +725,86 @@
   }
 
   function bindControls() {
-    // v0.3: the gear opens a SEPARATE native settings window (native mode) or
-    // toggles the embedded panel (browser preview / fallback).
     gear.addEventListener('click', function () {
+      if (isExtraWindow) return;
       if (Prefs.isNative && !isSettingsWindow) {
-        Prefs.openSettings().catch(function () {
-          // Fallback: embedded panel if the window could not be created.
-          settings.hidden = !settings.hidden;
-        });
+        Prefs.openSettings().catch(function () { settings.hidden = !settings.hidden; });
         return;
       }
       if (isSettingsWindow) return;
       settings.hidden = !settings.hidden;
+      applyRoot();  // 打开/关闭嵌入式面板时重算 opacity，避免面板半透明
     });
     function close() {
       if (isSettingsWindow) { Prefs.closeSettings(); return; }
       settings.hidden = true;
+      applyRoot();
     }
     byId('settings-close').addEventListener('click', close);
     byId('settings-close-2').addEventListener('click', close);
     byId('reset-defaults').addEventListener('click', resetDefaults);
 
     document.addEventListener('keydown', function (e) {
-      if (e.altKey && (e.key === 'r' || e.key === 'R')) {
-        e.preventDefault();
-        resetDefaults();
-      }
+      if (e.altKey && (e.key === 'r' || e.key === 'R')) { e.preventDefault(); resetDefaults(); }
     });
 
     byId('pref-lang').addEventListener('change', function (e) { changed({ lang: e.target.value }); });
-    byId('pref-style').addEventListener('change', function (e) {
-      changed({ style: e.target.value }, { rebuild: true });
-    });
+    byId('pref-style').addEventListener('change', function (e) { changed({ style: e.target.value }, { rebuild: true }); });
     byId('pref-font').addEventListener('change', function (e) {
       var v = e.target.value;
       if (v === CUSTOM) changed({ font: CUSTOM, customFont: byId('pref-font-custom').value });
       else changed({ font: v });
     });
-    byId('pref-font-custom').addEventListener('change', function (e) {
-      changed({ font: CUSTOM, customFont: e.target.value });
-    });
+    byId('pref-font-custom').addEventListener('change', function (e) { changed({ font: CUSTOM, customFont: e.target.value }); });
     byId('pref-color').addEventListener('change', function (e) {
       var v = e.target.value;
       if (v === CUSTOM) changed({ color: CUSTOM, customColor: byId('pref-color-custom').value });
       else changed({ color: v });
     });
-    byId('pref-color-custom').addEventListener('input', function (e) {
-      changed({ color: CUSTOM, customColor: e.target.value });
-    });
-    byId('pref-seconds').addEventListener('change', function (e) {
-      changed({ showSeconds: e.target.checked }, { rebuild: true });
-    });
-    byId('pref-hour12').addEventListener('change', function (e) { changed({ hour12: e.target.checked }); });
-    byId('pref-ontop').addEventListener('change', function (e) {
-      changed({ alwaysOnTop: e.target.checked });
-    });
+    byId('pref-color-custom').addEventListener('input', function (e) { changed({ color: CUSTOM, customColor: e.target.value }); });
+    byId('pref-seconds').addEventListener('change', function (e) { changed({ showSeconds: e.target.checked }, { rebuild: true }); });
+    byId('pref-hour12').addEventListener('change', function (e) { changed({ hour12: e.target.checked }, { rebuild: true }); });
+    byId('pref-separator').addEventListener('change', function (e) { changed({ showSeparator: e.target.checked }); });
+    byId('pref-analog-theme').addEventListener('change', function (e) { changed({ analogTheme: e.target.value }, { rebuild: true }); });
+    byId('pref-ontop').addEventListener('change', function (e) { changed({ alwaysOnTop: e.target.checked }); });
     byId('pref-autostart').addEventListener('change', function (e) {
       var wanted = e.target.checked;
       state.autostart = wanted;
       Prefs.save({ autostart: wanted });
       Prefs.setAutostart(wanted).then(function (actual) {
-        state.autostart = actual;
-        Prefs.save({ autostart: actual });
+        state.autostart = actual; Prefs.save({ autostart: actual });
         byId('pref-autostart').checked = actual;
       });
     });
+    byId('pref-clickthrough').addEventListener('change', function (e) { changed({ clickThrough: e.target.checked }); });
+    byId('pref-alarm-sound').addEventListener('change', function (e) { changed({ alarmSound: e.target.checked }); });
     byId('pref-backdrop').addEventListener('change', function (e) { changed({ backdrop: e.target.value }); });
     byId('pref-scale').addEventListener('input', function (e) { changed({ scale: Number(e.target.value) }); });
     byId('pref-opacity').addEventListener('input', function (e) { changed({ opacity: Number(e.target.value) }); });
+    byId('pref-auto-timesync').addEventListener('change', function (e) { changed({ autoTimeSync: e.target.checked }); });
+    byId('shutdown-action').addEventListener('change', function (e) { changed({ timerAction: e.target.value }); });
+    byId('shutdown-mode').addEventListener('change', function (e) { changed({ timerMode: e.target.value }); });
 
-    // Alarms — explicit hour/minute selects so the label never depends on the
-    // OS locale (input[type=time] renders "AM/PM" under en-US WebView2).
+    // analog penetration: 复用「指针穿透」开关（外观 Tab 之外也提供入口通过样式）
+    // 采用独立控件注入到表盘配色行下方（避免再改 HTML）
+    (function () {
+      var row = byId('analog-theme-row');
+      if (!row) return;
+      var wrap = document.createElement('label');
+      wrap.id = 'analog-penetrate-row';
+      wrap.hidden = true;
+      var span = document.createElement('span'); span.setAttribute('data-i18n', 'analogPenetrate'); span.textContent = '指针穿透';
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'dc-switch'; cb.id = 'pref-analog-penetrate';
+      wrap.appendChild(span); wrap.appendChild(cb);
+      row.parentNode.insertBefore(wrap, row.nextSibling);
+      cb.addEventListener('change', function (e) { changed({ analogPenetrate: e.target.checked }); });
+    })();
+
+    // Alarms — explicit hour/minute selects (locale-independent)
     (function () {
       var h = byId('alarm-hour'), m = byId('alarm-minute'), i, o;
-      for (i = 0; i < 24; i++) {
-        o = document.createElement('option');
-        o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2);
-        h.appendChild(o);
-      }
-      for (i = 0; i < 60; i++) {
-        o = document.createElement('option');
-        o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2);
-        m.appendChild(o);
-      }
+      for (i = 0; i < 24; i++) { o = document.createElement('option'); o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2); h.appendChild(o); }
+      for (i = 0; i < 60; i++) { o = document.createElement('option'); o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2); m.appendChild(o); }
       h.value = '07'; m.value = '30';
     })();
     byId('alarm-add').addEventListener('click', function () {
@@ -600,34 +816,31 @@
     });
     byId('alarm-toast-close').addEventListener('click', hideAlarmToast);
     byId('alarm-dismiss').addEventListener('click', hideAlarmToast);
+    byId('alarm-mute').addEventListener('click', function () { Alarm.stopRing(); this.disabled = true; });
     byId('alarm-snooze').addEventListener('click', function () {
       var list = (state.alarms || []).slice();
       list.push(Alarm.snooze());
       changed({ alarms: list });
       hideAlarmToast();
+      var mb = byId('alarm-mute'); if (mb) mb.disabled = false;
     });
 
-    // Shutdown timer
+    // Timer (shutdown / reboot, duration / clock)
     byId('shutdown-start').addEventListener('click', function () {
+      var L = STRINGS_LANG();
+      if (!Prefs.isNative) { byId('shutdown-status').textContent = I18n.t(L, 'shutdownUnsupported'); return; }
+      var action = byId('shutdown-action').value;
+      var mode = byId('shutdown-mode').value;
       var mins = Number(byId('shutdown-min').value) || 60;
-      if (!Prefs.isNative) {
-        byId('shutdown-status').textContent = I18n.t(STRINGS_LANG(), 'shutdownUnsupported');
-        return;
-      }
-      Alarm.scheduleShutdown(mins).then(function (target) {
-        shutdownTarget = target;
-        updateShutdownUI();
-      }).catch(function (err) {
-        byId('shutdown-status').textContent = String(err || 'failed');
-      });
+      var hhmm = byId('shutdown-time').value;
+      Alarm.scheduleTimer(action, mode, mins, hhmm).then(function (label) {
+        timerTarget = { label: label, action: action };
+        updateTimerUI();
+      }).catch(function (err) { byId('shutdown-status').textContent = String(err || 'failed'); });
     });
     byId('shutdown-cancel').addEventListener('click', function () {
-      Alarm.cancelShutdown().then(function () {
-        shutdownTarget = null;
-        updateShutdownUI();
-      }).catch(function (err) {
-        byId('shutdown-status').textContent = String(err || 'failed');
-      });
+      Alarm.cancelTimer().then(function () { timerTarget = null; updateTimerUI(); })
+        .catch(function (err) { byId('shutdown-status').textContent = String(err || 'failed'); });
     });
 
     // Drag the bottom-right grip to resize.
@@ -637,8 +850,7 @@
       var origin = null;
       grip.addEventListener('pointerdown', function (e) {
         origin = { x: e.clientX, y: e.clientY, scale: Number(state.scale) || 1 };
-        grip.setPointerCapture(e.pointerId);
-        e.preventDefault(); e.stopPropagation();
+        grip.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation();
       });
       grip.addEventListener('pointermove', function (e) {
         if (!origin) return;
@@ -680,12 +892,21 @@
   function startEngine(animate) {
     engine = new Engine({
       onTick: onTick,
+      now: displayNow,
       showSeconds: state.showSeconds,
       hour12: state.hour12,
       animate: animate
     });
-    ensureDom(engine.buildParts(new Date()), true);
+    var now = displayNow();
+    ensureDom(engine.buildParts(now), true);
     engine.start();
+  }
+
+  function syncAnalogPenetrateControls() {
+    var row = byId('analog-penetrate-row');
+    var cb = byId('pref-analog-penetrate');
+    if (row) row.hidden = state.style !== 'analog';
+    if (cb) cb.checked = !!state.analogPenetrate;
   }
 
   async function boot() {
@@ -694,38 +915,41 @@
     bindControls();
     bindExtras();
     syncControls();
-    // Independent settings window: skip the clock engine entirely (no ticks,
-    // no resize, no alarm toast) — it is a pure control surface.
+    syncAnalogPenetrateControls();
+
     if (!isSettingsWindow) {
-      setWindowSize(state.scale);   // restore remembered size on startup
+      setWindowSize(state.scale);
       startEngine(state.style === 'flip');
     }
 
-    // Cross-window sync: apply full broadcast state without writing back.
     Prefs.onChanged(applyRemotePrefs);
 
     if (Prefs.isNative) {
       Prefs.getAutostart().then(function (actual) {
-        state.autostart = actual;
-        Prefs.save({ autostart: actual });
+        state.autostart = actual; Prefs.save({ autostart: actual });
         byId('pref-autostart').checked = actual;
       });
-      Alarm.shutdownStatus().then(function (v) {
-        shutdownTarget = v || null;
-        updateShutdownUI();
+      Alarm.timerStatus().then(function (v) {
+        // v0.4 Rust 返回 {label, action}；兼容旧版返回字符串或 null。
+        if (v && typeof v === 'object') timerTarget = { label: v.label, action: v.action };
+        else if (typeof v === 'string') timerTarget = { label: v, action: 'shutdown' };
+        else timerTarget = null;
+        updateTimerUI();
       }).catch(function () { /* ignore */ });
+      if (state.clickThrough) Prefs.setClickThrough(true).catch(function () {});
+      // 启动时自动校时（仅主时钟窗口，避免多窗口重复触发）
+      if (state.autoTimeSync && !isSettingsWindow && !isExtraWindow) Prefs.syncSystemTime().catch(function () {});
     }
-    // Only the clock window tracks its own position.
-    if (!isSettingsWindow) listenMoved();
+    // 样式切换时同步「指针穿透」行的显示
+    var styleSel = byId('pref-style');
+    if (styleSel) styleSel.addEventListener('change', function () { setTimeout(syncAnalogPenetrateControls, 0); });
+    if (!isSettingsWindow && !isExtraWindow) listenMoved();
   }
 
   boot().catch(function (err) {
     try { console.warn('Desk Clock: prefs unavailable, using defaults', err); } catch (e) {}
     state = JSON.parse(JSON.stringify(Prefs.DEFAULTS));
-    applyRoot();
-    bindControls();
-    bindExtras();
-    syncControls();
+    applyRoot(); bindControls(); bindExtras(); syncControls(); syncAnalogPenetrateControls();
     Prefs.onChanged(applyRemotePrefs);
     if (!isSettingsWindow) startEngine(true);
   });

@@ -154,9 +154,19 @@ with sync_playwright() as pw:
     check("permission note rendered in dedicated window",
           settings.locator("#perm-note").inner_text().strip() != "",
           settings.locator("#perm-note").inner_text()[:60])
+    # v0.4: permission controls live in their own tab now.
+    settings.locator('#settings-tabs .tab[data-tab="permission"]').click()
+    settings.wait_for_timeout(150)
     check("native shim activates admin row", settings.locator("#perm-admin-row").is_visible())
+    settings.locator('#settings-tabs .tab[data-tab="about"]').click()
+    settings.wait_for_timeout(120)
     check("tray hint shown in native-simulated settings window",
           settings.locator("#tray-hint").is_visible())
+    # v0.4: settings is tabbed now — reveal the About tab first.
+    settings.locator('#settings-tabs .tab[data-tab="about"]').click()
+    settings.wait_for_timeout(150)
+    check("tab navigation reveals About panel",
+          settings.locator('[data-panel="about"]').is_visible())
     check("donate panel works in dedicated window", settings.locator("#donate-toggle").is_visible())
     settings.locator("#donate-toggle").click()
     settings.wait_for_timeout(120)

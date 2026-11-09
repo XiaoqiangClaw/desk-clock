@@ -6,18 +6,27 @@
     style: 'flip',
     showSeconds: true,
     hour12: false,
+    showSeparator: true,       // v0.4: 数字样式是否显示冒号（隐藏时保留间距）
     alwaysOnTop: false,
     autostart: false,
     backdrop: 'none',
     scale: 1,
     opacity: 1,
     lang: 'zh-CN',
-    font: '',                 // '' = the style's own recommended font
+    font: '',
     customFont: '',
-    color: '',                // '' = the style's own recommended colour
+    color: '',
     customColor: '#f6f7f9',
-    alarms: [],               // [{time:"HH:MM", repeat:bool, id:string}]
-    runAsAdmin: false,        // Windows: always elevate on future launches
+    analogTheme: 'dark',       // v0.4: 表盘深色/浅色两套默认
+    analogPenetrate: false,    // v0.4: 指针穿透表圈
+    clickThrough: false,       // v0.4: 鼠标穿透（点击穿透到下层窗口）
+    alarms: [],                // [{time:"HH:MM", repeat:bool, id:string}]
+    alarmSound: true,          // v0.4: 闹钟响铃
+    timerAction: 'shutdown',   // v0.4: shutdown | reboot
+    timerMode: 'duration',     // v0.4: duration | clock
+    autoTimeSync: false,       // v0.4: 启动时自动校时
+    extraClocks: [],           // v0.4: [{id,label,offset}] 多时区窗口
+    runAsAdmin: false,
     x: null,
     y: null
   };
@@ -49,7 +58,9 @@
     if (typeof obj.style === 'string' && obj.style) out.style = obj.style;
     if (typeof obj.backdrop === 'string' && obj.backdrop) out.backdrop = obj.backdrop;
     if (obj.lang === 'en' || obj.lang === 'zh-CN') out.lang = obj.lang;
-    ['showSeconds', 'hour12', 'alwaysOnTop', 'autostart', 'runAsAdmin'].forEach(function (k) {
+    ['showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop', 'autostart',
+     'analogPenetrate', 'clickThrough', 'alarmSound', 'autoTimeSync', 'runAsAdmin'
+    ].forEach(function (k) {
       if (obj[k] !== undefined) out[k] = !!obj[k];
     });
     if (isFinite(obj.scale)) out.scale = Math.min(2.5, Math.max(0.5, Number(obj.scale)));
@@ -60,15 +71,12 @@
     if (typeof obj.x === 'number' && isFinite(obj.x)) out.x = obj.x;
     if (typeof obj.y === 'number' && isFinite(obj.y)) out.y = obj.y;
     if (FONTS.indexOf(obj.font) >= 0) out.font = obj.font;
-    if (typeof obj.customFont === 'string' && obj.customFont.length <= 120) {
-      out.customFont = obj.customFont;
-    }
-    if (typeof obj.color === 'string' && (COLORS.indexOf(obj.color) >= 0 || HEX.test(obj.color))) {
-      out.color = obj.color;
-    }
-    if (typeof obj.customColor === 'string' && HEX.test(obj.customColor)) {
-      out.customColor = obj.customColor;
-    }
+    if (typeof obj.customFont === 'string' && obj.customFont.length <= 120) out.customFont = obj.customFont;
+    if (typeof obj.color === 'string' && (COLORS.indexOf(obj.color) >= 0 || HEX.test(obj.color))) out.color = obj.color;
+    if (typeof obj.customColor === 'string' && HEX.test(obj.customColor)) out.customColor = obj.customColor;
+    if (obj.analogTheme === 'dark' || obj.analogTheme === 'light') out.analogTheme = obj.analogTheme;
+    if (obj.timerAction === 'shutdown' || obj.timerAction === 'reboot') out.timerAction = obj.timerAction;
+    if (obj.timerMode === 'duration' || obj.timerMode === 'clock') out.timerMode = obj.timerMode;
     if (Array.isArray(obj.alarms)) {
       out.alarms = obj.alarms.filter(function (a) {
         return a && typeof a.time === 'string' && /^\d{2}:\d{2}$/.test(a.time);
@@ -77,6 +85,17 @@
           id: String(a.id || ('a' + Math.random().toString(36).slice(2, 9))),
           time: a.time,
           repeat: !!a.repeat
+        };
+      });
+    }
+    if (Array.isArray(obj.extraClocks)) {
+      out.extraClocks = obj.extraClocks.filter(function (c) {
+        return c && typeof c.label === 'string' && isFinite(c.offset);
+      }).slice(0, 8).map(function (c) {
+        return {
+          id: String(c.id || ('c' + Math.random().toString(36).slice(2, 9))),
+          label: c.label.slice(0, 16),
+          offset: Math.max(-720, Math.min(840, Math.round(Number(c.offset))))
         };
       });
     }
@@ -120,8 +139,7 @@
   }
 
   // Field-level patch write. Rust owns the authoritative full object and
-  // broadcasts it back, so two windows can never overwrite each other's fields
-  // (e.g. settings changes `style` while the clock saves a moved `x`).
+  // broadcasts it back, so two windows can never overwrite each other's fields.
   function save(patch) {
     merge(patch);
     var snapshot = clone(current);
@@ -209,14 +227,14 @@
     });
   }
 
-  function setRunAsAdmin(enabled) {
-    if (!isNative) return Promise.resolve(privilegeStatusFallback());
-    return invoke('set_run_as_admin', { enabled: !!enabled });
-  }
-
   function privilegeStatusFallback() {
     return { platform: 'browser', isElevated: false, canElevate: false,
       runAsAdmin: false, note: '浏览器预览模式：无系统权限，仅用于查看界面。' };
+  }
+
+  function setRunAsAdmin(enabled) {
+    if (!isNative) return Promise.resolve(privilegeStatusFallback());
+    return invoke('set_run_as_admin', { enabled: !!enabled });
   }
 
   function restartElevated() {
@@ -239,6 +257,25 @@
     return invoke('quit_app');
   }
 
+  // v0.4 new native commands
+  function presetPosition(pos) { return invoke('preset_position', { pos: pos }); }
+  function setClickThrough(enabled) { return invoke('set_click_through', { enabled: !!enabled }); }
+  function syncSystemTime() { return invoke('sync_system_time'); }
+  // 外链：前端只传标识符，Rust 解析真实地址（不接受任意 URL）。
+  function openUrl(kind) { return invoke('open_link', { kind: kind }); }
+  // 更新检查：GitHub REST API 允许跨域，前端直接 fetch；Rust 不引入 TLS 依赖。
+  function checkUpdate() {
+    try {
+      return fetch('https://api.github.com/repos/xiaoqiangclub/desk-clock/releases/latest',
+        { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'DeskClock' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d) { return { latest: d && d.tag_name ? String(d.tag_name) : '' }; });
+    } catch (e) { return Promise.reject(e); }
+  }
+  function addClockWindow(id, label, offset) { return invoke('add_clock_window', { id: id, label: label, offset: offset }); }
+  function closeClockWindow(id) { return invoke('close_clock_window', { id: id }); }
+  function listClockWindows() { return invoke('list_clock_windows'); }
+
   window.DeskClock.Prefs = {
     DEFAULTS: clone(DEFAULTS),
     isNative: isNative,
@@ -257,6 +294,14 @@
     restartElevated: restartElevated,
     openSettings: openSettings,
     closeSettings: closeSettings,
-    quitApp: quitApp
+    quitApp: quitApp,
+    presetPosition: presetPosition,
+    setClickThrough: setClickThrough,
+    syncSystemTime: syncSystemTime,
+    checkUpdate: checkUpdate,
+    openUrl: openUrl,
+    addClockWindow: addClockWindow,
+    closeClockWindow: closeClockWindow,
+    listClockWindows: listClockWindows
   };
 })();

@@ -96,10 +96,17 @@ with sync_playwright() as pw:
 
     # ---------- dropdown legibility (the Windows bug) ----------
     css = page.locator("#pref-style").evaluate(
-        "e => { const c=getComputedStyle(e); return {bg:c.backgroundColor,fg:c.color,opt:getComputedStyle(e.querySelector('option')).color}; }")
+        "e => { const c=getComputedStyle(e); const o=getComputedStyle(e.querySelector('option')); return {bg:c.backgroundColor,fg:c.color,opt:o.color,optbg:o.backgroundColor}; }")
+    def lum(rgb):
+        import re
+        n = [int(x) for x in re.findall(r'\d+', rgb)[:3]]
+        return sum(n) / 3 if n else 0
+    # Intent-based assertion (v0.4): select stays an OPAQUE DARK field with
+    # LIGHT text and explicitly-coloured options so Windows WebView2 popups
+    # are always legible — exact hex is free to change with the design.
     check("select has opaque dark bg + light fg",
-          css["bg"] == "rgb(32, 35, 42)" and css["fg"] == "rgb(242, 243, 245)", css)
-    check("select option explicitly light", css["opt"] == "rgb(242, 243, 245)", css)
+          lum(css["bg"]) < 90 and lum(css["fg"]) > 180 and "rgba" not in css["bg"], css)
+    check("select option explicitly light", lum(css["opt"]) > 180, css)
 
     # ---------- custom font / color ----------
     page.locator("#pref-font").select_option("mono")
