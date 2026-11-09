@@ -17,6 +17,7 @@
     color: '',                // '' = the style's own recommended colour
     customColor: '#f6f7f9',
     alarms: [],               // [{time:"HH:MM", repeat:bool, id:string}]
+    runAsAdmin: false,        // Windows: always elevate on future launches
     x: null,
     y: null
   };
@@ -31,6 +32,7 @@
   var current = clone(DEFAULTS);
   var saveTimer = null;
   var saveWaiters = [];
+  var pendingPatch = {};
 
   function clone(obj) {
     var out = {}, k;
@@ -47,7 +49,7 @@
     if (typeof obj.style === 'string' && obj.style) out.style = obj.style;
     if (typeof obj.backdrop === 'string' && obj.backdrop) out.backdrop = obj.backdrop;
     if (obj.lang === 'en' || obj.lang === 'zh-CN') out.lang = obj.lang;
-    ['showSeconds', 'hour12', 'alwaysOnTop', 'autostart'].forEach(function (k) {
+    ['showSeconds', 'hour12', 'alwaysOnTop', 'autostart', 'runAsAdmin'].forEach(function (k) {
       if (obj[k] !== undefined) out[k] = !!obj[k];
     });
     if (isFinite(obj.scale)) out.scale = Math.min(2.5, Math.max(0.5, Number(obj.scale)));
@@ -117,11 +119,17 @@
     current = normalize(current);
   }
 
-  // Debounced full-object write. Rust expects `prefs` as the full merged object.
+  // Field-level patch write. Rust owns the authoritative full object and
+  // broadcasts it back, so two windows can never overwrite each other's fields
+  // (e.g. settings changes `style` while the clock saves a moved `x`).
   function save(patch) {
     merge(patch);
     var snapshot = clone(current);
     writeLocal(snapshot);
+    var k;
+    for (k in patch) {
+      if (Object.prototype.hasOwnProperty.call(patch, k)) pendingPatch[k] = snapshot[k];
+    }
     if (!isNative) return Promise.resolve(clone(snapshot));
     return new Promise(function (resolve) {
       saveWaiters.push(resolve);
@@ -130,7 +138,9 @@
         saveTimer = null;
         var waiters = saveWaiters.slice();
         saveWaiters = [];
-        invoke('set_prefs', { prefs: snapshot })
+        var sent = pendingPatch;
+        pendingPatch = {};
+        invoke('set_prefs', { patch: sent })
           .then(function () { waiters.forEach(function (fn) { fn(clone(snapshot)); }); })
           .catch(function () { waiters.forEach(function (fn) { fn(clone(snapshot)); }); });
       }, SAVE_DEBOUNCE);
@@ -158,15 +168,95 @@
       .catch(function () { return !!enabled; });
   }
 
+  // ------------------------------------------------ cross-window sync / extras
+
+  function listen(event, cb) {
+    if (!isNative) return function () {};
+    try {
+      var ev = window.__TAURI__ && window.__TAURI__.event;
+      if (!ev || typeof ev.listen !== 'function') return function () {};
+      var un = null, cancelled = false;
+      ev.listen(event, function (e) { cb(e && e.payload); }).then(function (fn) {
+        if (cancelled) { try { fn(); } catch (err) {} } else { un = fn; }
+      });
+      return function () {
+        cancelled = true;
+        if (un) { try { un(); } catch (err) {} }
+      };
+    } catch (e) { return function () {}; }
+  }
+
+  // `cb` receives a NORMALIZED full prefs object. Never call save() from it.
+  function onChanged(cb) {
+    return listen('prefs-changed', function (payload) {
+      if (!payload || typeof payload !== 'object') return;
+      current = normalize(payload);
+      writeLocal(current);
+      cb(clone(current));
+    });
+  }
+
+  function privilegeStatus() {
+    if (!isNative) {
+      return Promise.resolve({
+        platform: 'browser', isElevated: false, canElevate: false,
+        runAsAdmin: false, note: '浏览器预览模式：无系统权限，仅用于查看界面。'
+      });
+    }
+    return invoke('get_privilege_status').catch(function () {
+      return { platform: 'unknown', isElevated: false, canElevate: false,
+        runAsAdmin: false, note: '无法读取权限状态。' };
+    });
+  }
+
+  function setRunAsAdmin(enabled) {
+    if (!isNative) return Promise.resolve(privilegeStatusFallback());
+    return invoke('set_run_as_admin', { enabled: !!enabled });
+  }
+
+  function privilegeStatusFallback() {
+    return { platform: 'browser', isElevated: false, canElevate: false,
+      runAsAdmin: false, note: '浏览器预览模式：无系统权限，仅用于查看界面。' };
+  }
+
+  function restartElevated() {
+    if (!isNative) return Promise.reject(new Error('浏览器模式不支持提权'));
+    return invoke('restart_elevated');
+  }
+
+  function openSettings() {
+    if (!isNative) return Promise.resolve();
+    return invoke('open_settings');
+  }
+
+  function closeSettings() {
+    if (!isNative) return Promise.resolve();
+    return invoke('close_settings');
+  }
+
+  function quitApp() {
+    if (!isNative) return Promise.resolve();
+    return invoke('quit_app');
+  }
+
   window.DeskClock.Prefs = {
     DEFAULTS: clone(DEFAULTS),
     isNative: isNative,
+    normalize: normalize,
     load: load,
     get: get,
     save: save,
     resetDefaults: function () { return save(clone(DEFAULTS)); },
     setWindowPosition: setWindowPosition,
     getAutostart: getAutostart,
-    setAutostart: setAutostart
+    setAutostart: setAutostart,
+    onChanged: onChanged,
+    listen: listen,
+    privilegeStatus: privilegeStatus,
+    setRunAsAdmin: setRunAsAdmin,
+    restartElevated: restartElevated,
+    openSettings: openSettings,
+    closeSettings: closeSettings,
+    quitApp: quitApp
   };
 })();

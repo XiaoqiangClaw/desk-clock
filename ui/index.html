@@ -19,6 +19,8 @@
       <button id="settings-close" type="button" aria-label="关闭">&times;</button>
     </div>
 
+    <div id="tray-hint" class="tray-hint" hidden data-i18n="trayHint">本程序常驻系统托盘，不在任务栏显示；关闭窗口只会隐藏到托盘，托盘菜单可重新显示或退出。</div>
+
     <label><span data-i18n="language">界面语言</span>
       <select id="pref-lang">
         <option value="zh-CN">简体中文</option>
@@ -125,6 +127,28 @@
     </div>
     <div id="shutdown-status" class="shutdown-status" data-i18n="shutdownOff">未启用</div>
     <div class="shutdown-warn" data-i18n="shutdownWarn">到点将关闭计算机，请先保存工作；可随时取消。</div>
+
+    <div class="settings-sep" data-i18n="permTitle">权限与启动</div>
+    <div id="perm-status" class="perm-status" data-i18n="permChecking">正在检查权限…</div>
+    <div id="perm-note" class="perm-note"></div>
+    <label id="perm-admin-row" class="perm-row" hidden><span data-i18n="permAdmin">始终以管理员身份启动</span>
+      <input id="perm-run-admin" type="checkbox">
+    </label>
+    <div class="perm-note" data-i18n="permAdminNote">勾选后，下次手动启动以及开机自启都会自动向 Windows 请求管理员权限（UAC 提示由系统弹出）；取消勾选即恢复普通权限。</div>
+    <button id="perm-elevate-now" class="settings-done perm-btn" type="button" hidden data-i18n="permElevateNow">立即以管理员身份重启</button>
+    <button id="perm-quit" class="settings-done perm-btn" type="button" hidden data-i18n="permQuit">退出程序</button>
+
+    <div class="settings-sep" data-i18n="donateTitle">打赏支持</div>
+    <div class="donate-note" data-i18n="donateNote">如果这个小工具有帮到你，欢迎请作者喝杯咖啡 ☕（完全自愿）</div>
+    <button id="donate-toggle" class="settings-done donate-btn" type="button" data-i18n="donateToggle">查看收款码</button>
+    <div id="donate-panel" class="donate-panel" hidden>
+      <div class="donate-tabs">
+        <button type="button" class="donate-tab active" data-donate="wechat" data-i18n="donateWechat">微信支付</button>
+        <button type="button" class="donate-tab" data-donate="alipay" data-i18n="donateAlipay">支付宝</button>
+      </div>
+      <div class="donate-qr"><img id="donate-img" src="assets/donate-wechat.jpg" alt="收款码"></div>
+      <div class="donate-foot" data-i18n="donateFoot">长按 / 截图后扫码 · 感谢你的支持</div>
+    </div>
 
     <button id="reset-defaults" class="settings-done reset" type="button" data-i18n="resetDefaults">一键还原默认（Alt+R）</button>
     <button id="settings-close-2" class="settings-done" type="button" data-i18n="close">关闭</button>

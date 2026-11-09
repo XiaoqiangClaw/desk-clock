@@ -20,7 +20,6 @@
   var app = document.getElementById('app');
   var clockEl = document.getElementById('clock');
   var gear = document.getElementById('gear');
-  var settings = document.getElementById('settings');
 
   var state = null;
   var engine = null;
@@ -30,6 +29,20 @@
   var builtPartsKey = '';
   var lastAlarmKey = '';
   var shutdownTarget = null;
+
+  // v0.3 dual-view: the SAME index.html serves the clock window and the
+  // independent settings window. Only the latter gets this flag (injected by
+  // Rust before any page script). Browser preview keeps the embedded panel.
+  var isSettingsWindow = window.__DC_VIEW__ === 'settings';
+  var settings = document.getElementById('settings');
+  var isOwnPanel = !isSettingsWindow;
+  var privStatus = null;
+
+  if (isSettingsWindow) {
+    document.body.setAttribute('data-view', 'settings');
+    document.title = 'Desk Clock · 设置';
+    settings.hidden = false;
+  }
 
   function byId(id) { return document.getElementById(id); }
 
@@ -65,14 +78,169 @@
     var out = byId('scale-out');
     if (out) out.textContent = Math.round(sc * 100) + '%';
     I18n.apply(state.lang);
+    if (isSettingsWindow) document.title = state.lang === 'en' ? 'Desk Clock · Settings' : 'Desk Clock · 设置';
   }
 
+  // Only the clock window may resize the CLOCK window. The settings window
+  // must never call this (Rust resolves "main" itself, but skip the traffic).
   function setWindowSize(scale) {
-    if (!Prefs.isNative) return;
+    if (!Prefs.isNative || isSettingsWindow) return;
     var core = window.__TAURI__ && window.__TAURI__.core;
     if (!core || typeof core.invoke !== 'function') return;
     core.invoke('set_window_size', { width: BASE_W * scale, height: BASE_H * scale })
       .catch(function () { /* WM refused; keep the visual scale anyway */ });
+  }
+
+  // ------------------------------------------- cross-window preference sync
+  // Rust is authoritative: its broadcast carries the full merged object.
+  // We apply it WITHOUT saving (that would create a write-back loop).
+  function applyRemotePrefs(next) {
+    var rebuild = next.style !== state.style || next.showSeconds !== state.showSeconds;
+    state = Prefs.normalize(next);
+    applyRoot();
+    if (engine) {
+      engine.setOptions({
+        showSeconds: state.showSeconds, hour12: state.hour12,
+        animate: state.style === 'flip'
+      });
+    }
+    syncControls();
+    if (rebuild && engine && !isSettingsWindow) {
+      var now = new Date();
+      ensureDom(engine.buildParts(now), true);
+      renderFrame({ parts: engine.buildParts(now), now: now });
+    }
+    renderPrivilege();
+  }
+
+  // ------------------------------------------------------- privilege section
+  function renderPrivilege() {
+    var box = byId('perm-status');
+    var note = byId('perm-note');
+    var row = byId('perm-admin-row');
+    var toggle = byId('perm-run-admin');
+    var nowBtn = byId('perm-elevate-now');
+    var quitBtn = byId('perm-quit');
+    if (!box) return;
+    var L = STRINGS_LANG();
+    var s = privStatus;
+    if (!s) {
+      box.textContent = I18n.t(L, 'permChecking');
+      box.className = 'perm-status';
+      if (note) note.textContent = '';
+      row.hidden = true; nowBtn.hidden = true; quitBtn.hidden = true;
+      return;
+    }
+    var labels = {
+      windows: 'Windows', macos: 'macOS', linux: 'Linux', browser: '浏览器预览', unknown: '未知'
+    };
+    box.className = 'perm-status ' + (s.isElevated ? 'elevated' : 'standard');
+    box.textContent = (labels[s.platform] || s.platform) + ' · ' +
+      (s.isElevated
+        ? (L === 'en' ? 'Running with administrator / root rights' : '已以管理员 / root 身份运行')
+        : (L === 'en' ? 'Running with standard rights' : '当前为标准权限')) +
+      ' · ' + (s.runAsAdmin ? I18n.t(L, 'permAdminOn') : I18n.t(L, 'permAdminOff'));
+    if (note) note.textContent = s.note || '';
+    var supported = !!s.canElevate;
+    row.hidden = !supported;
+    if (supported) toggle.checked = !!s.runAsAdmin;
+    nowBtn.hidden = !supported || !!s.isElevated;
+    nowBtn.disabled = false;
+    nowBtn.textContent = I18n.t(L, 'permElevateNow');
+    quitBtn.hidden = !Prefs.isNative;
+  }
+
+  function loadPrivilege() {
+    Prefs.privilegeStatus().then(function (s) {
+      privStatus = s;
+      renderPrivilege();
+    });
+  }
+
+  // ---------------------------------------------------------- donate section
+  function showDonatePanel() {
+    var panel = byId('donate-panel');
+    var btn = byId('donate-toggle');
+    var L = STRINGS_LANG();
+    if (!panel || !btn) return;
+    panel.hidden = false;
+    btn.textContent = I18n.t(L, 'donateHide');
+    panel.scrollIntoView({ block: 'nearest' });
+  }
+
+  function setDonateTab(which) {
+    var img = byId('donate-img');
+    if (img) img.src = which === 'alipay'
+      ? 'assets/donate-alipay.jpg' : 'assets/donate-wechat.jpg';
+    var tabs = document.querySelectorAll('.donate-tab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].classList.toggle('active', tabs[i].getAttribute('data-donate') === which);
+    }
+  }
+
+  // ------------------------------------------------------------- extra binds
+  function bindExtras() {
+    // Tray hint: only meaningful in the real native app.
+    var hint = byId('tray-hint');
+    if (hint) hint.hidden = !Prefs.isNative;
+
+    // Permission controls
+    byId('perm-run-admin').addEventListener('change', function (e) {
+      var wanted = e.target.checked;
+      e.target.disabled = true;
+      Prefs.setRunAsAdmin(wanted).then(function (s) {
+        privStatus = s;
+        state.runAsAdmin = !!s.runAsAdmin;
+        renderPrivilege();
+        e.target.disabled = false;
+      }).catch(function (err) {
+        e.target.checked = !wanted;
+        e.target.disabled = false;
+        var b = byId('perm-status');
+        if (b) b.textContent = String(err || 'failed');
+      });
+    });
+    byId('perm-elevate-now').addEventListener('click', function () {
+      var b = this;
+      b.disabled = true;
+      var L = STRINGS_LANG();
+      b.textContent = L === 'en' ? 'Requesting…' : '正在请求授权…';
+      Prefs.restartElevated().catch(function (err) {
+        b.disabled = false;
+        b.textContent = I18n.t(L, 'permElevateNow');
+        var s = byId('perm-status');
+        if (s) s.textContent = String(err || 'failed');
+      });
+    });
+    byId('perm-quit').addEventListener('click', function () { Prefs.quitApp(); });
+
+    // Donation controls
+    byId('donate-toggle').addEventListener('click', function () {
+      var panel = byId('donate-panel');
+      var L = STRINGS_LANG();
+      if (panel.hidden) { showDonatePanel(); }
+      else { panel.hidden = true; this.textContent = I18n.t(L, 'donateToggle'); }
+    });
+    (function () {
+      var tabs = document.querySelectorAll('.donate-tab');
+      for (var i = 0; i < tabs.length; i++) {
+        tabs[i].addEventListener('click', function () { setDonateTab(this.getAttribute('data-donate')); });
+      }
+    })();
+
+    // Rust-side tray "donate" intent: survive first-window creation race and
+    // also react to a live emit when the window already exists.
+    Prefs.listen('show-donate', showDonatePanel);
+    if (Prefs.isNative) {
+      var core = window.__TAURI__ && window.__TAURI__.core;
+      if (core && typeof core.invoke === 'function') {
+        core.invoke('take_donate_intent').then(function (v) {
+          if (v) showDonatePanel();
+        }).catch(function () {});
+      }
+    }
+
+    loadPrivilege();
   }
 
   function styleForParts(parts) {
@@ -298,7 +466,7 @@
       animate: state.style === 'flip'
     });
     if (patch.scale !== undefined) setWindowSize(state.scale);
-    if (patch.lang !== undefined) { syncControls(); }
+    if (patch.lang !== undefined) { syncControls(); renderPrivilege(); }
     if (opts && opts.rebuild) {
       var now = new Date();
       var parts = engine.buildParts(now);
@@ -310,9 +478,12 @@
 
   function resetDefaults() {
     var fresh = JSON.parse(JSON.stringify(Prefs.DEFAULTS));
-    // Keep the user's chosen language and window position across a reset.
+    // Keep the user's chosen language, window position and the Windows
+    // "always run as admin" choice across a reset — the RUNASADMIN layer
+    // would stay in the registry, so the UI must not pretend it was undone.
     fresh.lang = state.lang;
     fresh.x = state.x; fresh.y = state.y;
+    fresh.runAsAdmin = !!state.runAsAdmin;
     state = fresh;
     Prefs.save(fresh);
     applyRoot();
@@ -335,8 +506,23 @@
   }
 
   function bindControls() {
-    gear.addEventListener('click', function () { settings.hidden = !settings.hidden; });
-    function close() { settings.hidden = true; }
+    // v0.3: the gear opens a SEPARATE native settings window (native mode) or
+    // toggles the embedded panel (browser preview / fallback).
+    gear.addEventListener('click', function () {
+      if (Prefs.isNative && !isSettingsWindow) {
+        Prefs.openSettings().catch(function () {
+          // Fallback: embedded panel if the window could not be created.
+          settings.hidden = !settings.hidden;
+        });
+        return;
+      }
+      if (isSettingsWindow) return;
+      settings.hidden = !settings.hidden;
+    });
+    function close() {
+      if (isSettingsWindow) { Prefs.closeSettings(); return; }
+      settings.hidden = true;
+    }
     byId('settings-close').addEventListener('click', close);
     byId('settings-close-2').addEventListener('click', close);
     byId('reset-defaults').addEventListener('click', resetDefaults);
@@ -506,9 +692,17 @@
     state = await Prefs.load();
     applyRoot();
     bindControls();
+    bindExtras();
     syncControls();
-    setWindowSize(state.scale);   // restore remembered size on startup
-    startEngine(state.style === 'flip');
+    // Independent settings window: skip the clock engine entirely (no ticks,
+    // no resize, no alarm toast) — it is a pure control surface.
+    if (!isSettingsWindow) {
+      setWindowSize(state.scale);   // restore remembered size on startup
+      startEngine(state.style === 'flip');
+    }
+
+    // Cross-window sync: apply full broadcast state without writing back.
+    Prefs.onChanged(applyRemotePrefs);
 
     if (Prefs.isNative) {
       Prefs.getAutostart().then(function (actual) {
@@ -521,7 +715,8 @@
         updateShutdownUI();
       }).catch(function () { /* ignore */ });
     }
-    listenMoved();
+    // Only the clock window tracks its own position.
+    if (!isSettingsWindow) listenMoved();
   }
 
   boot().catch(function (err) {
@@ -529,7 +724,9 @@
     state = JSON.parse(JSON.stringify(Prefs.DEFAULTS));
     applyRoot();
     bindControls();
+    bindExtras();
     syncControls();
-    startEngine(true);
+    Prefs.onChanged(applyRemotePrefs);
+    if (!isSettingsWindow) startEngine(true);
   });
 })();

@@ -601,3 +601,90 @@ html, body {
 .alarm-toast-body { margin: 8px 0 12px; }
 .alarm-toast-actions { display: flex; gap: 6px; }
 .alarm-toast-actions button { flex: 1; font-size: 11px; }
+
+/* ------------------------------------------- v0.3 tray / settings window */
+/* The clock window shows only the clock. When the SAME index.html is loaded
+   in the separate "settings" native window, an initialization script sets
+   window.__DC_VIEW__ and this rule turns the page into a full-size settings
+   surface. Browser previews (no flag) keep the v0.2 embedded panel so all
+   existing regression scripts stay valid. */
+body[data-view="settings"] { background: #17181c; overflow: auto; }
+body[data-view="settings"] #app {
+  display: block; width: 100%; min-height: 100vh; height: auto;
+  padding: 0; background: transparent; cursor: default;
+  -webkit-app-region: no-drag;
+  font-size: 13px;
+}
+body[data-view="settings"] #clock,
+body[data-view="settings"] #gear,
+body[data-view="settings"] #resize-handle,
+body[data-view="settings"] #tray-menu-btn,
+body[data-view="settings"] #alarm-toast { display: none !important; }
+body[data-view="settings"] #settings {
+  position: static; display: block; width: auto; max-height: none;
+  margin: 0 auto; padding: 18px 20px 28px; border: 0; border-radius: 0;
+  background: transparent; box-shadow: none; backdrop-filter: none;
+  overflow: visible; font-size: 13px;
+}
+body[data-view="settings"] .settings-head { font-size: 16px; margin-bottom: 14px; }
+body[data-view="settings"] .settings-head button { font-size: 22px; }
+body[data-view="settings"] .settings label { margin: 9px 0; }
+body[data-view="settings"] .settings select,
+body[data-view="settings"] .settings input[type="range"],
+body[data-view="settings"] .settings input[type="color"],
+body[data-view="settings"] .settings input[type="text"] { flex: 0 0 190px; width: 190px; }
+body[data-view="settings"] .settings-sep { margin-top: 18px; }
+body[data-view="settings"] .tray-hint { max-width: 560px; }
+
+/* Tray hint (shown in the clock's own embedded panel in browser mode too). */
+.tray-hint {
+  margin: 0 0 12px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(108,199,255,.08); border: 1px solid rgba(108,199,255,.28);
+  color: #cdeeff; font-size: 11px; line-height: 1.5;
+}
+#tray-menu-btn {
+  position: absolute; top: 4px; right: 34px; width: 26px; height: 26px;
+  padding: 0; border: 0; border-radius: 50%; background: rgba(255,255,255,.09);
+  color: rgba(255,255,255,.78); font-size: 14px; line-height: 1;
+  cursor: pointer; opacity: 0; transition: opacity .2s ease; z-index: 40;
+  -webkit-app-region: no-drag;
+}
+#app:hover #tray-menu-btn, #tray-menu-btn:focus-visible { opacity: .9; }
+
+/* Permission / elevation section */
+.perm-status {
+  padding: 8px 10px; border-radius: 8px; margin-bottom: 8px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  font-size: 12px; color: #eceef1; line-height: 1.5;
+}
+.perm-status.elevated { border-color: rgba(107,255,143,.45); color: #b9ffcd; }
+.perm-status.standard { border-color: rgba(255,208,137,.40); color: #ffd9a3; }
+.perm-note { font-size: 10.5px; line-height: 1.5; color: rgba(236,238,241,.6); margin: 4px 0 8px; }
+.perm-row { margin: 8px 0; }
+button.perm-btn { margin-top: 6px; }
+button.perm-btn:disabled { opacity: .45; cursor: not-allowed; }
+button#perm-quit { background: rgba(255,107,107,.10); border-color: rgba(255,107,107,.42); color: #ffc9c9; }
+
+/* Donation section */
+.donate-note { font-size: 11px; line-height: 1.5; color: rgba(236,238,241,.68); margin-bottom: 8px; }
+button.donate-btn { margin-top: 2px; }
+.donate-panel {
+  margin-top: 8px; padding: 10px; border-radius: 10px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.14);
+}
+.donate-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.donate-tab {
+  flex: 1; padding: 5px 8px; font: inherit; font-size: 11px;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 6px;
+  background: rgba(255,255,255,.05); color: #dfe2e6; cursor: pointer;
+}
+.donate-tab:hover { background: rgba(255,255,255,.12); }
+.donate-tab.active {
+  background: rgba(108,199,255,.18); border-color: rgba(108,199,255,.55); color: #cdeeff;
+}
+.donate-qr {
+  width: 100%; border-radius: 8px; overflow: hidden; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+.donate-qr img { display: block; width: 100%; height: auto; }
+.donate-foot { margin-top: 7px; text-align: center; font-size: 10.5px; color: rgba(236,238,241,.55); }
