@@ -22,7 +22,7 @@
 - `python3 scripts/verify_features.py` → **43/43 PASS**（i18n/字体/颜色/重置/闹钟/关机/缩放）
 - `python3 scripts/verify_v03.py` → **33/33 PASS**（托盘提示、独立设置窗口视图、权限区、打赏 Tab、跨窗口广播无回写）
 - 预览截图：`.preview/settings-window-v03.png`
-- Rust 编译：本机已部署 rustup + WebKit 依赖做 `cargo check`（CI 白跑风险已压到最低）；GitHub Actions 全平台出包为准
+- Rust 编译：**GitHub Actions 全平台 5/5 job 全绿**（Windows msi/nsis、macOS dmg×2、Linux deb/rpm/AppImage 真实编译通过，run 42561609022）
 
 ## 如实边界
 - 托盘左键唤出时钟在 **Linux 上无效**（Tauri 官方：Linux 不发托盘点击事件），Linux 用户请用托盘右键菜单「显示时钟」；macOS/Windows 正常。
