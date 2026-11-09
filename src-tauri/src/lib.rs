@@ -23,7 +23,7 @@ static DONATE_INTENT: AtomicBool = AtomicBool::new(false);
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WebviewUrl};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,19 +390,19 @@ fn ensure_settings_window(app: &AppHandle) -> Result<(), String> {
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-        .title("Desk Clock · 设置")
-        .inner_size(430.0, 680.0)
-        .min_inner_size(360.0, 420.0)
-        .resizable(true)
-        .decorations(true)
-        .transparent(false)
-        .skip_taskbar(false)
-        .center()
-        // Injected before any page script: switches the SAME index.html into
-        // settings-only layout. No query-string / asset-path pitfalls.
-        .initialization_script("window.__DC_VIEW__='settings';")
-        .build()
-        .map_err(|e| e.to_string())?;
+    .title("Desk Clock · 设置")
+    .inner_size(430.0, 680.0)
+    .min_inner_size(360.0, 420.0)
+    .resizable(true)
+    .decorations(true)
+    .transparent(false)
+    .skip_taskbar(false)
+    .center()
+    // Injected before any page script: switches the SAME index.html into
+    // settings-only layout. No query-string / asset-path pitfalls.
+    .initialization_script("window.__DC_VIEW__='settings';")
+    .build()
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -443,8 +443,8 @@ fn build_tray(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let donate_i = MenuItem::with_id(app, "donate", "打赏支持", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
+    let quit_i =
+        MenuItem::with_id(app, "quit", "退出", true, None::<&str>).map_err(|e| e.to_string())?;
 
     // append() takes &dyn IsMenuItem individually — no array coercion needed.
     // Linux also requires a menu for the tray icon to become visible.
@@ -460,7 +460,8 @@ fn build_tray(app: &AppHandle) -> Result<(), String> {
         .show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
         // `Image<'_>` borrows the app's icon; build a fully-owned copy.
-        let owned = tauri::image::Image::new_owned(icon.rgba().to_vec(), icon.width(), icon.height());
+        let owned =
+            tauri::image::Image::new_owned(icon.rgba().to_vec(), icon.width(), icon.height());
         builder = builder.icon(owned);
     }
     builder.build(app).map_err(|e| e.to_string())?;
@@ -585,8 +586,12 @@ fn get_shutdown_status(state: State<'_, ShutdownState>) -> Result<Option<String>
 /// logical with the window's current scale factor. If the position would land
 /// off-screen (monitor unplugged), fall back to the centered default.
 fn restore_position(win: &WebviewWindow, prefs: &Prefs) {
-    let (Some(x), Some(y)) = (prefs.x, prefs.y) else { return };
-    let Ok(scale) = win.scale_factor() else { return };
+    let (Some(x), Some(y)) = (prefs.x, prefs.y) else {
+        return;
+    };
+    let Ok(scale) = win.scale_factor() else {
+        return;
+    };
     let lx = x / scale;
     let ly = y / scale;
 
@@ -606,7 +611,9 @@ fn restore_position(win: &WebviewWindow, prefs: &Prefs) {
         }
     }
     if on_screen {
-        let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(lx, ly)));
+        let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+            lx, ly,
+        )));
     }
 }
 
