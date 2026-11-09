@@ -32,19 +32,20 @@
 1. **完整源码**：`projects/desk-clock/`（已开源至 `github.com/xiaoqiangclub/desk-clock`，MIT）
 2. **一键脚本**：`scripts/dev.sh`（开发）、`scripts/build.sh`（出安装包）、`scripts/verify.py`（回归验收）
 3. **立即可看的成品**：直接用浏览器打开 `ui/index.html` 就是全功能时钟（浏览器模式设置存 localStorage）
-4. 各平台安装包：在装有 Rust 的目标机上 `bash scripts/build.sh`，产物在 `src-tauri/target/release/bundle/`
+4. 各平台安装包：已由 GitHub Actions 自动打包并发布到 Releases（也可本地 `bash scripts/build.sh` 自行构建）
 
-## 原生安装包（已在 InstaBox 主机真编译）
-- 构建环境：InstaBox `d-spare-01`（Debian 13 / Rust 1.99 / 4C8G），Tauri CLI v2.12.4 + Tauri v2.12.5，`libwebkit2gtk-4.1-dev` 等依赖齐备
-- 产物（已回拉到 `dist/`，均与远端 SHA256 一致）：
-  - `Desk-Clock_0.1.0_amd64.deb` — Debian/Ubuntu/Mint 系（`sudo dpkg -i` 或 `sudo apt install ./...deb`）
-  - `Desk-Clock-0.1.0-1.x86_64.rpm` — Fedora/RHEL/openSUSE 系（`sudo rpm -i` 或 `dnf install ./...rpm`）
-  - `.AppImage`（103 MiB）在远端也成功产出，因回拉通道对大文件不稳定未带回；需要时可在目标机重跑 `scripts/build.sh`，或单独索取
-- 编译零 warning；源码与二进制一致（修完两处无害告警后增量重编译并回拉覆盖）
-- Windows（.msi/.exe）与 macOS（.dmg/.app）需**在对应系统上**跑 `scripts/build.sh`（跨平台交叉编译 Tauri 不支持，这是工具链限制，非代码问题）
+## 原生安装包（GitHub Actions 全平台自动打包）
+- 开源为公共仓库后，改由 `.github/workflows/build.yml` 在 push 时自动出全平台安装包，`.github/workflows/release.yml` 在推 `v*` 标签时自动发布到 Releases。公库 Actions 免费无限，不消耗私有库额度。
+- 首次构建（run 42534181876）**5 个 job 全绿**，产出 9 件：
+  - Linux：`deb` / `rpm` / `AppImage`
+  - Windows：`msi` / NSIS `exe`
+  - macOS：`dmg` / `app`（Intel x64 + Apple Silicon aarch64）
+- 开源前的 `dist/` 下 deb/rpm 是 InstaBox 主机手工编译并回拉的历史产物（SHA256 校验一致），保留作存档；正式下载以 Releases 为准。
+- Windows / macOS 无需本地手工构建：GitHub 托管的对应系统 runner 直接产出原生包（Tauri 不支持跨平台交叉编译，但矩阵各跑各的系统即可，已解决）。
 
 ## 如实边界（不冒充已做）
 - 自启/置顶的**真实系统效果**需在有图形界面的目标机上首跑确认一次（代码路径与权限已齐、编译通过；本网关无桌面环境不实测 GUI）
 - 透明窗口在 Linux 依赖 WebKitGTK 合成器支持；个别纯 X11/无合成 WM 下透明可能退化为不透明（Tauri/WebKit 平台限制）
 - `analog` 样式关秒时隐藏秒针（表盘与刻度仍保留，属正常表盘观感）
-- AppImage 与 Win/macOS 安装包见上节说明
+- 安装包均为**未签名**产物：macOS 首次打开需右键→打开或 `xattr -cr`，Windows 可能出现 SmartScreen 提示（需代码签名证书，属待办）
+- AppImage 与 Win/macOS 安装包见上节说明（已由 CI 自动产出）

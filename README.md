@@ -74,14 +74,26 @@ bash scripts/build.sh     # 出安装包（产物在 src-tauri/target/release/bu
 - [x] Tauri v2 壳（透明无边框窗口、偏好原子持久化、位置恢复与越界兜底、自启、置顶权限）
 - [x] 静态前端（8 样式、翻页 3D 动画、单次 setTimeout 引擎、设置面板）
 - [x] 无头 Chromium 功能 + 视觉验收（31/31 PASS）
-- [x] **Linux 原生安装包已在 InstaBox 主机真编译并回拉**（`dist/` 下 deb + rpm，零 warning，SHA256 校验一致）
-- [ ] Windows / macOS 安装包需在对应系统上跑 `scripts/build.sh`（Tauri 不支持跨平台交叉编译）
+- [x] **Linux 原生安装包**（deb / rpm / AppImage，GitHub Actions 自动构建）
+- [x] **Windows 安装包**（msi / NSIS exe，GitHub Actions 自动构建）
+- [x] **macOS 安装包**（dmg / app，Intel x64 + Apple Silicon arm64，GitHub Actions 自动构建）
+- [x] **全平台安装包发布到 GitHub Releases**（推 `v*` 标签自动发布；9 个产物已验证全绿）
 
-### 现成安装包
-```
-dist/Desk-Clock_0.1.0_amd64.deb          Debian/Ubuntu/Mint：sudo apt install ./dist/*.deb
-dist/Desk-Clock-0.1.0-1.x86_64.rpm       Fedora/RHEL/openSUSE：sudo dnf install ./dist/*.rpm
-```
+### 下载安装包
+
+到 [Releases](https://github.com/xiaoqiangclub/desk-clock/releases) 下载对应平台：
+
+| 平台 | 文件 | 安装 |
+|---|---|---|
+| Debian / Ubuntu / Mint | `*.deb` | `sudo apt install ./*.deb` |
+| Fedora / RHEL / openSUSE | `*.rpm` | `sudo dnf install ./*.rpm` |
+| 通用 Linux | `*.AppImage` | `chmod +x *.AppImage && ./*.AppImage` |
+| Windows | `*.msi` 或 `*-setup.exe` | 双击安装 |
+| macOS Intel | `*x64.dmg` | 拖入 Applications |
+| macOS Apple Silicon | `*aarch64.dmg` | 拖入 Applications |
+
+> 以上均由公共仓库的 GitHub Actions 免费自动打包，不消耗私有库 Actions 额度。
+> 首次构建产物也可在 [Actions](https://github.com/xiaoqiangclub/desk-clock/actions) 的 Artifacts 里取。
 
 ## 开源
 
