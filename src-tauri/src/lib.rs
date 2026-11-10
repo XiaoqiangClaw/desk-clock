@@ -532,7 +532,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock v0.6.2 · 设置")
+    .title("Desk Clock v0.6.3 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -647,7 +647,7 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock v0.6.2 · {}", label))
+    .title(format!("Desk Clock v0.6.3 · {}", label))
     // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
     .inner_size(
         cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
@@ -1447,7 +1447,7 @@ fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> 
         "alert",
         WebviewUrl::App(PathBuf::from("alert.html")),
     )
-    .title("Desk Clock v0.6.2 · 提醒")
+    .title("Desk Clock v0.6.3 · 提醒")
     .inner_size(360.0, 220.0)
     .resizable(false)
     .decorations(false)
@@ -1565,7 +1565,13 @@ pub fn run() {
     tauri::Builder::default()
         // Single instance MUST be registered first. A second launch hands its
         // args to this callback and exits; we simply bring the clock back.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // NSIS 安装器通过单实例通道请求优雅退出，避免 RestartManager 的
+            // WM_CLOSE 被「关窗隐藏到托盘」拦截后无法自动关闭运行中的工具。
+            if args.iter().any(|a| a == "--dc-exit-for-install") {
+                app.exit(0);
+                return;
+            }
             let _ = show_main_now(app);
         }))
         .setup(|app| {

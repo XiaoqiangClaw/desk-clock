@@ -1,5 +1,7 @@
 # v0.6.2 安装测试清单（给主人）
 
+> **历史快照，当前 v0.6.3 见 `TESTING-v0.6.3.md`。**
+
 > 本轮 9 项反馈复测。安装包（待 CI 发布后）：`https://github.com/xiaoqiangclub/desk-clock/releases/tag/v0.6.2`
 
 | 系统 | 下载（以 Release 实际资产名为准） |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone preview tool: regenerate the 3 settings-window screenshots.
 
-Not part of any regression assertion. Produces v0.6.2-look screenshots:
+Not part of any regression assertion. Produces v0.6.3-look screenshots:
   .preview/settings-zh.png           zh-CN, appearance tab, 760x700
   .preview/settings-en.png           en, appearance tab, 760x700
   .preview/settings-window-v062.png  zh-CN, window tab with populated manager

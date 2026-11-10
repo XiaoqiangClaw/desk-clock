@@ -13,7 +13,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.6.2';
+  var APP_VERSION = '0.6.3';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 

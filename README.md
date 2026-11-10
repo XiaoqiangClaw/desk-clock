@@ -2,7 +2,8 @@
 
 一个**开源免费**的桌面时钟：8 种社区流行样式，无边框透明窗口，低资源占用，支持**任意多个窗口且每个窗口都有全套独立设置**（样式、颜色、字体、大小、时区、位置、鼠标穿透等），以及闹钟、定时关机/重启、系统校时、开机自启。一套静态前端 + 一个 Tauri v2 Rust 壳，跨 **Windows / macOS / Linux**。
 
-> 协议 [MIT](LICENSE) ｜ 界面**默认简体中文，支持中英双语切换** ｜ 当前版本 **v0.6.2**，安装包由公共仓库的 GitHub Actions 自动打包全平台。
+> 协议 [MIT](LICENSE) ｜ 界面**默认简体中文，支持中英双语切换** ｜ 当前版本 **v0.6.3**，安装包由公共仓库的 GitHub Actions 自动打包全平台。
+> 各版本历史快照见 `DELIVERY*.md` / `TESTING*.md`；当前 **v0.6.3** 见 `DELIVERY-v0.6.3.md`。
 
 ## 效果预览
 
@@ -23,7 +24,7 @@
 
 </details>
 
-设置窗口（左侧 Tab 导航 + 卡片分组，v0.6.2 真实界面）：
+设置窗口（左侧 Tab 导航 + 卡片分组，v0.6.3 真实界面）：
 
 | 简体中文（默认） | English | 窗口管理 |
 |---|---|---|
@@ -80,8 +81,9 @@
 | v0.6.0 | **所有窗口完全平等**：`clocks.json` 每窗口完整配置、「正在编辑」目标切换、主窗口也能设时区 |
 | v0.6.1 | 窗口管理并入「窗口」页并精简表单、头部布局整理；修复窗口拖不动与「移动一个窗口其它窗口跟着动」；位置/注入值改为每窗口独立 |
 | v0.6.2 | 九宫格按可见内容贴边（窗口外壳=内容尺寸）、校时页显示当前窗口时区、版本号进窗口标题、头部「正在编辑」紧邻蓝点；闹钟/定时提醒改为屏幕居中弹窗（按钮可点）、响铃时长可设、定时任务提前提醒/静默/终止 |
+| v0.6.3 | 修复 NSIS 安装/更新时「自动关闭运行中的工具」失败：`installerHooks` 经单实例通道请求旧实例优雅退出，最多等 3 秒后强制结束兜底；普通关窗仍隐藏到托盘 |
 
-> 各版本逐条对照见仓库根目录 `DELIVERY*.md`，安装复测步骤见 `TESTING*.md`。历史文档是当时快照，当前行为以本文件与 `DELIVERY-v0.6.2.md` 为准。
+> 各版本逐条对照见仓库根目录 `DELIVERY*.md`，安装复测步骤见 `TESTING*.md`。历史文档是当时快照，当前行为以本文件与 `DELIVERY-v0.6.3.md` 为准。
 
 ## 为什么是这个架构
 
@@ -95,7 +97,7 @@
 
 ## 下载安装包
 
-到 **[Releases](https://github.com/xiaoqiangclub/desk-clock/releases)** 下载对应平台（当前 v0.6.2）：
+到 **[Releases](https://github.com/xiaoqiangclub/desk-clock/releases)** 下载对应平台（当前 v0.6.3）：
 
 | 平台 | 文件 | 安装 |
 |---|---|---|
@@ -119,7 +121,7 @@ docs/SPEC.md        初始设计契约（模块接口、8 种样式、验收标�
 scripts/dev.sh      开发运行
 scripts/build.sh    出各平台安装包
 scripts/preview.sh  无头 Chromium 截图验收（8 张样式 + 3 张设置界面）
-scripts/preview_settings.py  单独重生成 3 张 v0.6.2 设置界面截图
+scripts/preview_settings.py  单独重生成 3 张 v0.6.3 设置界面截图
 scripts/verify*.py  分版本真实 Chromium 回归（见下）
 .preview/           8 张样式截图 + 3 张设置界面截图
 ```
@@ -139,6 +141,7 @@ python3 scripts/verify_v05.py       # 55 项 v0.5 反馈批次回归（已适配
 python3 scripts/verify_v06.py       # 22 项每窗口独立配置回归
 python3 scripts/verify_v061.py      # 30 项 v0.6.1 反馈批次 + 位置独立性回归
 python3 scripts/verify_v062.py      # 34 项 v0.6.2 反馈批次（贴边/标题/头部/弹窗/响铃/提醒）回归
+python3 scripts/verify_v063.py      # v0.6.3 NSIS 安装钩子结构断言（纯文件，无需 Chromium）
 # 合计 310 项；需 playwright + chromium
 ```
 
@@ -171,7 +174,8 @@ bash scripts/build.sh     # 出安装包（产物在 src-tauri/target/release/bu
 - [x] 单实例 + 多窗口 + 20 个常用时区及自定义 UTC 偏移 + 九宫格定位 + 鼠标穿透
 - [x] 托盘常驻、独立设置窗口、管理员权限、自动更新检查、打赏页
 - [x] **每窗口完整独立配置**（`clocks.json`）、目标切换、位置完全独立、窗口管理并入「窗口」页
-- [x] 无头 Chromium 回归：31 + 43 + 35 + 60 + 55 + 22 + 30 + 34 = **310 项全绿**
+- [x] **NSIS 安装/更新时可自动关闭运行中的工具**（v0.6.3）：`installerHooks` 经单实例通道请求优雅退出、等约 3 秒后强制结束兜底；普通点 × 仍只隐藏到托盘
+- [x] 无头 Chromium 回归：31 + 43 + 35 + 60 + 55 + 22 + 30 + 34 = **310 项全绿**；`scripts/verify_v063.py` 纯结构断言另计
 - [x] **Linux / Windows / macOS 全平台安装包**由 GitHub Actions 自动构建并发布 Release
 
 ## 开源

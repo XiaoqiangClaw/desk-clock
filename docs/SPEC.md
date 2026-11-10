@@ -1,7 +1,7 @@
 # Desk Clock — 设计契约
 
 > **阅读顺序**：本文是项目初始（v1 草案）的模块接口与视觉契约，用于理解「为什么这样写」。
-> 当前（**v0.6.2**）的完整功能、多窗口配置分层与行为，以根目录 `README.md` 和 `DELIVERY-v0.6.2.md` 为准。
+> 当前（**v0.6.3**）的完整功能、多窗口配置分层与行为，以根目录 `README.md` 和 `DELIVERY-v0.6.3.md` 为准。
 > 本文已把与现状冲突的接口/非目标表述同步修正，新增第 7 节记录 v0.6 之后的关键演进。
 
 开源桌面时钟：只显示时间，可选是否显示秒，8 种样式，无边框透明、低资源、跨 Windows / macOS / Linux；
@@ -186,4 +186,13 @@
    close_alert/alert_action` 三命令，替换受 `data-tauri-drag-region` 影响的旧 DOM 弹窗
    （浏览器预览仍保留旧路径供回归）；`alarmRingSeconds` 自动停铃；`timerWarnMode/
    timerWarnSeconds` + `TimerState.generation` 实现定时任务提前提醒、静默模式与弹窗终止。
-   详见 `DELIVERY-v0.6.2.md`。
+    详见 `DELIVERY-v0.6.2.md`。
+4. **v0.6.3**：修复 NSIS 安装/更新时「自动关闭运行中的工具」失败。官方 `installer.nsi` 的
+   `CheckIfAppIsRunning` 走 Windows RestartManager 发 `WM_CLOSE`，被本程序「关窗一律
+   `prevent_close` + `hide` 到托盘」拦成隐藏而非退出，`RmShutdown` 因此失败。改为在
+   `bundle.windows.nsis.installerHooks`（`src-tauri/windows/hooks.nsh`）的
+   `NSIS_HOOK_PREINSTALL` / `NSIS_HOOK_PREUNINSTALL` 里，先用单实例插件通道
+   `RunAsUser "desk-clock.exe" "--dc-exit-for-install"` 请求旧实例 `app.exit(0)`，
+   最多等约 3 秒（`FindProcessCurrentUser` 每 200ms 查一次），仍未退出则
+   `KillProcessCurrentUser` 兜底；普通点 × 隐藏到托盘的语义不变。
+   详见 `DELIVERY-v0.6.3.md`。
