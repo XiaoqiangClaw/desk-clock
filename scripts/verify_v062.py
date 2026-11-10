@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""v0.6.2 verification: 9 feedback items (positions, time-sync note, titles,
+"""v0.6.2 UI and configuration checks (positions, time-sync note, titles,
 header, alert popups, ring duration, timer warning / silent / terminate).
 
-Real Chromium for DOM assertions + pure-file structural assertions for Rust
+Real Chromium for DOM assertions plus pure-file structural assertions for Rust
 (no cargo on this host; CI compiles). Does not replace the 7 older suites.
 """
 import functools
@@ -38,7 +38,7 @@ httpd = socketserver.TCPServer(
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 URL = "http://127.0.0.1:%d/index.html" % httpd.server_address[1]
 
-# Mirrors the native Tauri shim used by verify_v061.py, plus v0.6.2 commands.
+# Minimal Tauri shim for the browser-based checks.
 SETTINGS_INIT = """
 window.__DC_VIEW__='settings';window.__DC_SETTINGS__=1;
 window.__dc_listeners={};window.__dc_onMoved=0;window.__dc_alerts=[];

@@ -802,7 +802,7 @@ fn list_clock_windows(app: AppHandle) -> Vec<String> {
 // v0.6.0：每窗口完整配置（clocks.json）
 //
 // 所有时钟窗口完全平等：每个窗口一份完整配置，主窗口只是默认存在的那一个。
-// 全部用 serde_json::Value 读写（本机无 cargo，避免结构体/泛型编译风险）。
+// 每窗口配置用 serde_json::Value 读写，保持配置字段灵活可扩展。
 // 旧 prefs.json 继续存全局项与窗口清单（extra_clocks），升级不丢配置。
 // ================================================================
 

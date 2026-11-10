@@ -1495,7 +1495,7 @@
     });
 
     // v0.5.1：Tauri hide() 不触发 document.hidden，用 Rust 定向事件停/复表，
-    // 避免隐藏的额外时钟窗口仍每秒 tick 占用资源（用户反馈「变卡」）。
+    // 避免隐藏的额外时钟窗口仍每秒 tick 占用资源。
     if (isExtraWindow) {
       Prefs.listen('clock-visibility', function (v) {
         if (!engine) return;

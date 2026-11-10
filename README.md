@@ -3,7 +3,7 @@
 一个**开源免费**的桌面时钟：8 种社区流行样式，无边框透明窗口，低资源占用，支持**任意多个窗口且每个窗口都有全套独立设置**（样式、颜色、字体、大小、时区、位置、鼠标穿透等），以及闹钟、定时关机/重启、系统校时、开机自启。一套静态前端 + 一个 Tauri v2 Rust 壳，跨 **Windows / macOS / Linux**。
 
 > 协议 [MIT](LICENSE) ｜ 界面**默认简体中文，支持中英双语切换** ｜ 当前版本 **v0.6.3**，安装包由公共仓库的 GitHub Actions 自动打包全平台。
-> 各版本历史快照见 `DELIVERY*.md` / `TESTING*.md`；当前 **v0.6.3** 见 `DELIVERY-v0.6.3.md`。
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 效果预览
 
@@ -24,11 +24,11 @@
 
 </details>
 
-设置窗口（左侧 Tab 导航 + 卡片分组，v0.6.3 真实界面）：
+设置窗口（左侧 Tab 导航 + 卡片分组）：
 
 | 简体中文（默认） | English | 窗口管理 |
 |---|---|---|
-| ![设置面板·中文](.preview/settings-zh.png) | ![Settings English](.preview/settings-en.png) | ![窗口管理](.preview/settings-window-v062.png) |
+| ![设置面板·中文](.preview/settings-zh.png) | ![Settings English](.preview/settings-en.png) | ![窗口管理](.preview/settings-window-v063.png) |
 
 > 窗口管理在「窗口」页：主窗口卡片不可删除，添加表单只有名称 + 添加窗口；「正在编辑」下拉框切换配置目标。
 > 截图背景为查看器底色；真实桌面上时钟悬浮于壁纸之上，无任何外框或黑底。
@@ -83,7 +83,7 @@
 | v0.6.2 | 九宫格按可见内容贴边（窗口外壳=内容尺寸）、校时页显示当前窗口时区、版本号进窗口标题、头部「正在编辑」紧邻蓝点；闹钟/定时提醒改为屏幕居中弹窗（按钮可点）、响铃时长可设、定时任务提前提醒/静默/终止 |
 | v0.6.3 | 修复 NSIS 安装/更新时「自动关闭运行中的工具」失败：`installerHooks` 经单实例通道请求旧实例优雅退出，最多等 3 秒后强制结束兜底；普通关窗仍隐藏到托盘 |
 
-> 各版本逐条对照见仓库根目录 `DELIVERY*.md`，安装复测步骤见 `TESTING*.md`。历史文档是当时快照，当前行为以本文件与 `DELIVERY-v0.6.3.md` 为准。
+> 版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 为什么是这个架构
 
@@ -117,12 +117,12 @@
 ```
 ui/                 静态前端（index.html + i18n / prefs / fonts / alarm / flip / clock / app + styles.css）
 src-tauri/          Tauri v2 Rust 壳（窗口 / 每窗口配置持久化 / 位置与尺寸恢复 / 自启 / 定时关机）
-docs/SPEC.md        初始设计契约（模块接口、8 种样式、验收标准；后续演进见本 README 与 DELIVERY*.md）
+docs/SPEC.md        技术设计说明（模块接口、8 种样式与配置模型）
 scripts/dev.sh      开发运行
 scripts/build.sh    出各平台安装包
-scripts/preview.sh  无头 Chromium 截图验收（8 张样式 + 3 张设置界面）
+scripts/preview.sh  生成预览截图（8 张样式 + 3 张设置界面）
 scripts/preview_settings.py  单独重生成 3 张 v0.6.3 设置界面截图
-scripts/verify*.py  分版本真实 Chromium 回归（见下）
+scripts/verify*.py  分版本自动化检查（见下）
 .preview/           8 张样式截图 + 3 张设置界面截图
 ```
 
@@ -133,15 +133,15 @@ scripts/verify*.py  分版本真实 Chromium 回归（见下）
 ```bash
 bash scripts/preview.sh             # 生成 .preview/*.png（8 张样式 + 3 张设置界面，共 11 张）
 python3 scripts/preview_settings.py # 只重生成 3 张设置界面截图（760×700 独立窗口视图）
-python3 scripts/verify.py           # 31 项基础功能 + 视觉回归
-python3 scripts/verify_features.py  # 43 项功能回归（双语/字体色/还原/闹钟/关机/拖拽）
-python3 scripts/verify_v03.py       # 35 项 v0.3 托盘/权限回归
-python3 scripts/verify_v04.py       # 60 项 v0.4 新功能回归（已适配 v0.6.1 结构）
-python3 scripts/verify_v05.py       # 55 项 v0.5 反馈批次回归（已适配 v0.6.1 结构）
-python3 scripts/verify_v06.py       # 22 项每窗口独立配置回归
-python3 scripts/verify_v061.py      # 30 项 v0.6.1 反馈批次 + 位置独立性回归
-python3 scripts/verify_v062.py      # 34 项 v0.6.2 反馈批次（贴边/标题/头部/弹窗/响铃/提醒）回归
-python3 scripts/verify_v063.py      # v0.6.3 NSIS 安装钩子结构断言（纯文件，无需 Chromium）
+python3 scripts/verify.py           # 31 项基础功能 + 视觉检查
+python3 scripts/verify_features.py  # 43 项功能检查（双语/字体色/还原/闹钟/关机/拖拽）
+python3 scripts/verify_v03.py       # 35 项 v0.3 托盘/权限检查
+python3 scripts/verify_v04.py       # 60 项 v0.4 新功能检查
+python3 scripts/verify_v05.py       # 55 项 v0.5 功能检查
+python3 scripts/verify_v06.py       # 22 项每窗口独立配置检查
+python3 scripts/verify_v061.py      # 30 项 v0.6.1 功能与位置独立性检查
+python3 scripts/verify_v062.py      # 34 项 v0.6.2 功能检查（贴边/标题/头部/弹窗/响铃/提醒）
+python3 scripts/verify_v063.py      # v0.6.3 安装钩子结构检查（纯文件，无需 Chromium）
 # 合计 310 项；需 playwright + chromium
 ```
 
@@ -175,7 +175,7 @@ bash scripts/build.sh     # 出安装包（产物在 src-tauri/target/release/bu
 - [x] 托盘常驻、独立设置窗口、管理员权限、自动更新检查、打赏页
 - [x] **每窗口完整独立配置**（`clocks.json`）、目标切换、位置完全独立、窗口管理并入「窗口」页
 - [x] **NSIS 安装/更新时可自动关闭运行中的工具**（v0.6.3）：`installerHooks` 经单实例通道请求优雅退出、等约 3 秒后强制结束兜底；普通点 × 仍只隐藏到托盘
-- [x] 无头 Chromium 回归：31 + 43 + 35 + 60 + 55 + 22 + 30 + 34 = **310 项全绿**；`scripts/verify_v063.py` 纯结构断言另计
+- [x] 自动化检查：31 + 43 + 35 + 60 + 55 + 22 + 30 + 34 = **310 项通过**；`scripts/verify_v063.py` 结构检查另计
 - [x] **Linux / Windows / macOS 全平台安装包**由 GitHub Actions 自动构建并发布 Release
 
 ## 开源

@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""v0.6.3 verification: NSIS installerHooks auto-close fix.
-
-Pure-file structural assertions only (no Chromium needed on this host).
-Does not replace the 8 older suites; checks hooks.nsh, tauri.conf.json,
-lib.rs single-instance callback, version consistency and docs.
+"""v0.6.3 installer hooks structural checks.
 """
 import json
 import re
@@ -83,14 +79,12 @@ check("no stale 0.6.2 in version sources",
           for p in ("src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "scripts/verify_v04.py")))
 
 # ===== 5. docs =====
-for name in ("README.md", "DELIVERY.md", "DELIVERY-v0.6.3.md", "TESTING-v0.6.3.md", "docs/SPEC.md"):
+for name in ("README.md", "CHANGELOG.md", "docs/SPEC.md"):
     p = ROOT / name
     check("%s exists and mentions v0.6.3" % name,
           p.exists() and "v0.6.3" in p.read_text(encoding="utf-8"))
-check("DELIVERY-v0.6.2.md marked as historical snapshot",
-      "历史快照" in (ROOT / "DELIVERY-v0.6.2.md").read_text(encoding="utf-8"))
-check("TESTING-v0.6.2.md marked as historical snapshot",
-      "历史快照" in (ROOT / "TESTING-v0.6.2.md").read_text(encoding="utf-8"))
+check("no TESTING markdown files", not any((ROOT.glob("TESTING-*.md"))))
+check("no DELIVERY markdown files", not any((ROOT.glob("DELIVERY*.md"))))
 
 failed = [r for r in results if not r[1]]
 print("\n=== SUMMARY: %d passed, %d failed ===" % (len(results) - len(failed), len(failed)))

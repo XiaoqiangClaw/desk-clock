@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Standalone preview tool: regenerate the 3 settings-window screenshots.
 
-Not part of any regression assertion. Produces v0.6.3-look screenshots:
+Not part of any regression assertion. Produces v0.6.3 settings screenshots:
   .preview/settings-zh.png           zh-CN, appearance tab, 760x700
   .preview/settings-en.png           en, appearance tab, 760x700
-  .preview/settings-window-v062.png  zh-CN, window tab with populated manager
+  .preview/settings-window-v063.png  zh-CN, window tab with populated manager
 """
 import functools
 import http.server
@@ -175,7 +175,7 @@ with sync_playwright() as pw:
         raise RuntimeError("expected 3 manager rows (main+tokyo+ny), got %d" % rows)
     if page.locator('#cm-list .cm-row[data-cm-id="main"] .cm-row-tag').count() != 1:
         raise RuntimeError("main card missing tag")
-    save(page, OUT / "settings-window-v062.png")
+    save(page, OUT / "settings-window-v063.png")
 
     browser.close()
 

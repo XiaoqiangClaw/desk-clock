@@ -1,8 +1,7 @@
 # Desk Clock — 设计契约
 
-> **阅读顺序**：本文是项目初始（v1 草案）的模块接口与视觉契约，用于理解「为什么这样写」。
-> 当前（**v0.6.3**）的完整功能、多窗口配置分层与行为，以根目录 `README.md` 和 `DELIVERY-v0.6.3.md` 为准。
-> 本文已把与现状冲突的接口/非目标表述同步修正，新增第 7 节记录 v0.6 之后的关键演进。
+> 本文是模块接口、样式与配置模型的技术说明。
+> 当前版本 **v0.6.3**，功能与行为以根目录 `README.md` 和 `CHANGELOG.md` 为准。
 
 开源桌面时钟：只显示时间，可选是否显示秒，8 种样式，无边框透明、低资源、跨 Windows / macOS / Linux；
 同一进程可开任意多个时钟窗口，**每个窗口都有全套独立配置**。
@@ -138,21 +137,21 @@
 - `@media (prefers-reduced-motion: reduce)` 关闭所有动画/过渡。
 - 动画只用 `transform/opacity`，`will-change` 仅在 `.is-flipping` 期间加。
 
-## 5. 验收标准
+## 5. 质量检查
 
 - `node --check` 全部 JS 通过；Python 回归脚本 `py_compile` 通过；`tauri.conf.json` /
   `capabilities/default.json` 合法 JSON；shell 脚本 `bash -n` 通过。
-- 真实 Chromium（Playwright + loopback HTTP）分版本回归：
+- 真实 Chromium（Playwright + loopback HTTP）分版本自动化检查：
   `verify.py` 31 + `verify_features.py` 43 + `verify_v03.py` 35 + `verify_v04.py` 60 +
-  `verify_v05.py` 55 + `verify_v06.py` 22 + `verify_v061.py` 30 = **276 项全绿**（v0.6.1）。
+  `verify_v05.py` 55 + `verify_v06.py` 22 + `verify_v061.py` 30 = **276 项通过**（v0.6.1）。
 - 浏览器打开 `ui/index.html`：默认 flip 风格能显示当前时间、逐秒翻页、无黑底无边框；8 风格均正常渲染。
 - 多窗口：每个窗口各自渲染自己的样式/颜色/时区/显示秒；切换编辑目标不串配置；
   两个独立页面均只注册窗口作用域 `onMoved`、无全局 `tauri://move` 监听。
-- Rust 全平台编译/打包以 GitHub Actions CI 为准（本机可能缺 webkit 开发库，不跑 cargo）。
+- Rust 全平台编译与打包由 GitHub Actions 完成。
 
-## 6. 初始非目标 → 现状
+## 6. 早期非目标 → 现状
 
-初版草案把以下列为「v1 不做」；**这些功能后来都已实现**，不再是限制：
+早期版本曾把以下列为暂不实现；**这些功能后来均已实现**：
 
 | 初版非目标 | 现状 |
 |---|---|
@@ -169,30 +168,7 @@
 - 浏览器预览不创建真实原生窗口，多窗口行为以原生安装版为准。
 - 安装包未做代码签名（macOS 需右键打开，Windows 可能弹 SmartScreen）。
 
-## 7. v0.6 之后的架构演进（要点）
+## 7. 版本演进
 
-1. **v0.6.0**：从「一份共享配置 + 额外窗口 4 个独立参数」重构为 `clocks.json` 每窗口完整配置；
-   所有窗口平等，主窗口只是默认存在的那一个；设置窗口增加「正在编辑」目标选择器；
-   新增 `window-prefs-changed` 定向事件，各窗口只应用自己/当前目标，避免广播覆盖。
-   旧后端兼容靠 `supportsWindowApi` 探测（`get_window_configs` 无 `clocks` 则降级为双写 `set_prefs`）。
-2. **v0.6.1**：窗口管理并入「窗口」页并精简为「名称 + 添加窗口」；主窗口纳入卡片清单；
-   补 `start_dragging` 权限、取消额外窗口恒鼠标穿透，使每个窗口都能拖动与点齿轮；
-   位置监听改窗口作用域 `onMoved` 修连锁移动；`set_window_prefs` 不再因改配置而重定位窗口；
-   启动恢复与注入值改从每窗口 `clocks.json` 读取，避免重启回退；一键还原默认不再误删窗口清单。
-   详见 `DELIVERY-v0.6.1.md`。
-3. **v0.6.2**：窗口外壳尺寸改为 `#app` 内容真实尺寸并持久化到 `clocks.json` 的 `w/h`
-   （九宫格 `outer_size()` 贴边因此与左侧对称）；校时页只读显示当前窗口时区，明确系统校时与
-   时区无关；版本号进所有窗口标题。新增独立 `alert.html` 居中提醒窗口与 `show_alert/
-   close_alert/alert_action` 三命令，替换受 `data-tauri-drag-region` 影响的旧 DOM 弹窗
-   （浏览器预览仍保留旧路径供回归）；`alarmRingSeconds` 自动停铃；`timerWarnMode/
-   timerWarnSeconds` + `TimerState.generation` 实现定时任务提前提醒、静默模式与弹窗终止。
-    详见 `DELIVERY-v0.6.2.md`。
-4. **v0.6.3**：修复 NSIS 安装/更新时「自动关闭运行中的工具」失败。官方 `installer.nsi` 的
-   `CheckIfAppIsRunning` 走 Windows RestartManager 发 `WM_CLOSE`，被本程序「关窗一律
-   `prevent_close` + `hide` 到托盘」拦成隐藏而非退出，`RmShutdown` 因此失败。改为在
-   `bundle.windows.nsis.installerHooks`（`src-tauri/windows/hooks.nsh`）的
-   `NSIS_HOOK_PREINSTALL` / `NSIS_HOOK_PREUNINSTALL` 里，先用单实例插件通道
-   `RunAsUser "desk-clock.exe" "--dc-exit-for-install"` 请求旧实例 `app.exit(0)`，
-   最多等约 3 秒（`FindProcessCurrentUser` 每 200ms 查一次），仍未退出则
-   `KillProcessCurrentUser` 兜底；普通点 × 隐藏到托盘的语义不变。
-   详见 `DELIVERY-v0.6.3.md`。
+各版本的功能变化、修复与发布记录统一见根目录 `CHANGELOG.md`；本文只保留稳定的接口、配置模型与设计约束。
+
