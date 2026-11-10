@@ -1,7 +1,7 @@
 # Desk Clock — 设计契约
 
 > **阅读顺序**：本文是项目初始（v1 草案）的模块接口与视觉契约，用于理解「为什么这样写」。
-> 当前（**v0.6.1**）的完整功能、多窗口配置分层与行为，以根目录 `README.md` 和 `DELIVERY-v0.6.1.md` 为准。
+> 当前（**v0.6.2**）的完整功能、多窗口配置分层与行为，以根目录 `README.md` 和 `DELIVERY-v0.6.2.md` 为准。
 > 本文已把与现状冲突的接口/非目标表述同步修正，新增第 7 节记录 v0.6 之后的关键演进。
 
 开源桌面时钟：只显示时间，可选是否显示秒，8 种样式，无边框透明、低资源、跨 Windows / macOS / Linux；
@@ -180,3 +180,10 @@
    位置监听改窗口作用域 `onMoved` 修连锁移动；`set_window_prefs` 不再因改配置而重定位窗口；
    启动恢复与注入值改从每窗口 `clocks.json` 读取，避免重启回退；一键还原默认不再误删窗口清单。
    详见 `DELIVERY-v0.6.1.md`。
+3. **v0.6.2**：窗口外壳尺寸改为 `#app` 内容真实尺寸并持久化到 `clocks.json` 的 `w/h`
+   （九宫格 `outer_size()` 贴边因此与左侧对称）；校时页只读显示当前窗口时区，明确系统校时与
+   时区无关；版本号进所有窗口标题。新增独立 `alert.html` 居中提醒窗口与 `show_alert/
+   close_alert/alert_action` 三命令，替换受 `data-tauri-drag-region` 影响的旧 DOM 弹窗
+   （浏览器预览仍保留旧路径供回归）；`alarmRingSeconds` 自动停铃；`timerWarnMode/
+   timerWarnSeconds` + `TimerState.generation` 实现定时任务提前提醒、静默模式与弹窗终止。
+   详见 `DELIVERY-v0.6.2.md`。

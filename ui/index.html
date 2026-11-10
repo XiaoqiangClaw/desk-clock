@@ -210,6 +210,10 @@
               <input id="alarm-custom-file" type="file" accept="audio/*" hidden>
             </div>
             <div id="alarm-custom-status" class="field-note" data-dyn>未选择文件</div>
+            <label><span data-i18n="alarmRingSeconds">响铃时长（秒）</span>
+              <input id="alarm-ring-seconds" type="number" min="5" max="600" step="5" value="30" class="dc-input">
+            </label>
+            <div class="field-note" data-i18n="alarmRingSecondsNote">到点后响铃到设定时长自动停止；也可随时手动静音或终止。</div>
 
             <div class="alarm-editor">
               <div class="alarm-time">
@@ -252,6 +256,16 @@
               <button id="shutdown-cancel" class="dc-btn tiny danger" type="button" hidden data-i18n="shutdownCancel">取消</button>
             </div>
             <div id="shutdown-status" class="shutdown-status" data-dyn>未启用</div>
+            <label><span data-i18n="timerWarnMode">到点前提醒</span>
+              <select id="timer-warn-mode" class="dc-select">
+                <option value="popup" data-i18n="timerWarnModePopup">弹窗提醒</option>
+                <option value="silent" data-i18n="timerWarnModeSilent">静默执行（不提醒）</option>
+              </select>
+            </label>
+            <label><span data-i18n="timerWarnSeconds">提前提醒（秒）</span>
+              <input id="timer-warn-seconds" type="number" min="5" max="300" step="5" value="30" class="dc-input">
+            </label>
+            <div class="field-note" data-i18n="timerWarnSecondsNote">弹窗中可直接终止任务；静默模式不弹窗、不提醒。</div>
             <div class="shutdown-warn" data-i18n="shutdownWarn">到点将执行系统动作，请先保存工作；可随时取消。</div>
           </div>
         </section>
@@ -260,6 +274,7 @@
         <section class="panel" data-panel="timezone">
           <div class="card">
             <div class="card-title" data-i18n="grpClockSync">系统时间校准</div>
+            <div id="sync-tz" class="field-note" data-dyn></div>
             <div class="sync-row">
               <span id="sync-clock" class="sync-clock">--:--:--</span>
               <button id="sync-now" class="dc-btn tiny" type="button" data-i18n="syncNow">立即校时</button>
@@ -269,6 +284,7 @@
               <input id="pref-auto-timesync" type="checkbox" class="dc-switch">
             </label>
             <div class="field-note" data-i18n="syncNote">校时调用操作系统自带的时间服务，不会修改本程序之外的任何数据。</div>
+            <div class="field-note" data-i18n="syncTzNote">系统校准的是 UTC 绝对时间，与时区无关；每个窗口显示的时区可在「外观」页单独设置。</div>
           </div>
         </section>
 
@@ -332,12 +348,13 @@
 
   <div id="alarm-toast" class="alarm-toast" hidden>
     <div class="alarm-toast-head"><span data-i18n="alarmRinging">⏰ 闹钟</span>
-      <button id="alarm-toast-close" type="button" aria-label="关闭">&times;</button></div>
+      <button id="alarm-toast-close" type="button" data-tauri-drag-region="false" aria-label="关闭">&times;</button></div>
     <div id="alarm-toast-body" class="alarm-toast-body"></div>
     <div class="alarm-toast-actions">
-      <button id="alarm-mute" class="dc-btn tiny ghost" type="button" data-i18n="alarmMute">静音</button>
-      <button id="alarm-snooze" class="dc-btn tiny" type="button" data-i18n="alarmSnooze">稍后提醒</button>
-      <button id="alarm-dismiss" class="dc-btn tiny primary" type="button" data-i18n="alarmDismiss">知道了</button>
+      <button id="alarm-mute" class="dc-btn tiny ghost" type="button" data-tauri-drag-region="false" data-i18n="alarmMute">静音</button>
+      <button id="alarm-snooze" class="dc-btn tiny" type="button" data-tauri-drag-region="false" data-i18n="alarmSnooze">稍后提醒</button>
+      <button id="alarm-stop" class="dc-btn tiny danger" type="button" data-tauri-drag-region="false" data-i18n="alarmStop">终止</button>
+      <button id="alarm-dismiss" class="dc-btn tiny primary" type="button" data-tauri-drag-region="false" data-i18n="alarmDismiss">知道了</button>
     </div>
   </div>
 </div>

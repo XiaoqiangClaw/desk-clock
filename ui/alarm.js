@@ -153,12 +153,16 @@
     return Math.max(1, Math.round((target.getTime() - now.getTime()) / 60000));
   }
 
-  function scheduleTimer(action, mode, minutes, hhmm) {
+  function scheduleTimer(action, mode, minutes, hhmm, warnMode, warnSeconds) {
     var mins = mode === 'clock' ? minutesUntil(hhmm) : (Number(minutes) || 0);
     if (mins < 1) return Promise.reject(new Error('invalid time'));
     var d = new Date(Date.now() + mins * 60000);
     var label = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
-    return invoke('schedule_timer', { action: action, minutes: mins, label: label });
+    return invoke('schedule_timer', {
+      action: action, minutes: mins, label: label,
+      warnMode: warnMode === 'silent' ? 'silent' : 'popup',
+      warnSeconds: Math.min(300, Math.max(5, Number(warnSeconds) || 30))
+    });
   }
 
   function cancelTimer() { return invoke('cancel_timer'); }

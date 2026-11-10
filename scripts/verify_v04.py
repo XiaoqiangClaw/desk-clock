@@ -229,7 +229,7 @@ with sync_playwright() as pw:
           page.locator("#donate-toggle").inner_text())
     check("project link present", page.locator("#project-link").count() == 1)
     check("check-update button present", page.locator("#check-update").count() == 1)
-    check("version badge shows 0.6.1", "0.6.1" in page.locator("#ver-badge").inner_text(),
+    check("version badge shows 0.6.2", "0.6.2" in page.locator("#ver-badge").inner_text(),
           page.locator("#ver-badge").inner_text())
     qr = page.locator("#donate-img")
     page.locator("#donate-toggle").click(); page.wait_for_timeout(150)
@@ -237,8 +237,6 @@ with sync_playwright() as pw:
           qr.evaluate("img => Math.abs(img.naturalWidth - img.naturalHeight) < 4"),
           (qr.evaluate("img=>img.naturalWidth"), qr.evaluate("img=>img.naturalHeight")))
     page.locator("#donate-toggle").click()
-
-    page.screenshot(path=str(OUT / "settings-v04.png"), full_page=True)
 
     # ================= dedicated settings window (native shim) =================
     ctx2 = browser.new_context(viewport={"width": 520, "height": 760})
@@ -261,7 +259,6 @@ with sync_playwright() as pw:
     body_op = sw.locator("#settings").evaluate("e => getComputedStyle(e).opacity")
     check("dedicated settings window stays fully opaque on opacity change",
           float(app_op) == 1.0 and float(body_op) == 1.0, (app_op, body_op))
-    sw.screenshot(path=str(OUT / "settings-window-v04.png"), full_page=True)
 
     # ================= extra timezone clock window =================
     ctx3 = browser.new_context(viewport={"width": 700, "height": 300})

@@ -13,7 +13,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.6.1';
+  var APP_VERSION = '0.6.2';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -75,6 +75,7 @@
   var privStatus = null;
   var privError = false;    // v0.5: 权限状态读取失败（显示重试按钮）
   var editingClockId = null; // v0.5: 管理器正在编辑的窗口 id
+  var ringTimeout = null;    // v0.6.2: 闹钟响铃自动停止计时器
 
   // v0.6：所有窗口配置化。注入值仅作为旧构建/兜底，真实值以 state 为准。
   var isSettingsWindow = window.__DC_VIEW__ === 'settings';
@@ -88,11 +89,11 @@
 
   if (isSettingsWindow) {
     document.body.setAttribute('data-view', 'settings');
-    document.title = 'Desk Clock · 设置';
+    document.title = 'Desk Clock v' + APP_VERSION + ' · 设置';
     settings.hidden = false;
   } else if (isExtraWindow) {
     document.body.setAttribute('data-view', 'extra');
-    document.title = 'Desk Clock · ' + (window.__DC_TZ_LABEL__ || '时区时钟');
+    document.title = 'Desk Clock v' + APP_VERSION + ' · ' + (window.__DC_TZ_LABEL__ || '时区时钟');
     // v0.6.1：所有窗口平等——额外窗口也保留齿轮与缩放柄，
     // 点齿轮会打开设置并自动把编辑目标切到自己。
   }
@@ -174,7 +175,9 @@
     app.setAttribute('data-analog-theme', state.analogTheme === 'light' ? 'light' : 'dark');
     app.setAttribute('data-analog-penetrate', String(!!state.analogPenetrate));
     I18n.apply(state.lang);
-    if (isSettingsWindow) document.title = state.lang === 'en' ? 'Desk Clock · Settings' : 'Desk Clock · 设置';
+    if (isSettingsWindow) document.title = 'Desk Clock v' + APP_VERSION + (state.lang === 'en' ? ' · Settings' : ' · 设置');
+    else if (isExtraWindow) document.title = 'Desk Clock v' + APP_VERSION + ' · ' + (window.__DC_TZ_LABEL__ || '时区时钟');
+    else document.title = 'Desk Clock v' + APP_VERSION;
     var vb = byId('ver-badge'); if (vb) vb.textContent = 'v' + APP_VERSION;
     var av = byId('about-version'); if (av) av.textContent = APP_VERSION;
   }
@@ -184,16 +187,24 @@
     return !isSettingsWindow && !isExtraWindow && settings && !settings.hidden;
   }
 
+  // v0.6.2：窗口外壳尺寸 = #app 内容真实尺寸（逻辑像素）。
+  // 外壳此前恒为 640×220，九宫格用 outer_size 贴边时可见内容右侧空出大片透明区。
+  function appContentSize() {
+    var r = app.getBoundingClientRect();
+    var w = Math.ceil(r.width) || BASE_W;
+    var h = Math.ceil(r.height) || BASE_H;
+    return { w: w, h: h };
+  }
+
   // v0.6：缩放/尺寸作用于「当前编辑目标窗口」，而非写死 main。
   function setWindowSize(scale) {
     if (!Prefs.isNative) return;
-    if (!Prefs.isSettingsView && !isSettingsWindow && !isExtraWindow) {
-      // 时钟窗口改自己
-      Prefs.setWindowGeometry(Prefs.getSelfId(), null, null, scale).catch(function () {});
-      return;
-    }
-    // 设置窗口：改当前选中的目标窗口
-    Prefs.setWindowGeometry(Prefs.getTargetId(), null, null, scale).catch(function () {});
+    // 独立设置窗口里无法测量目标时钟窗口，让 Rust 用已持久化的 w/h；
+    // 时钟窗口自己测量 #app（含 padding）并把 w/h 传给 Rust。
+    var own = !Prefs.isSettingsView() && !isSettingsWindow && !isExtraWindow;
+    var size = own ? appContentSize() : null;
+    var id = own ? Prefs.getSelfId() : Prefs.getTargetId();
+    Prefs.setWindowGeometry(id, null, null, scale, size).catch(function () {});
   }
 
   // ------------------------------------------- cross-window preference sync
@@ -893,14 +904,45 @@
     showAlarmToast(hits.map(function (a) { return a.time; }).join('、'));
   }
 
+  // v0.6.2：校时页显示当前编辑目标窗口的时区；系统校时校准 UTC 绝对时间，不分区。
+  function syncTzInfo() {
+    var el = byId('sync-tz');
+    if (!el) return;
+    var L = STRINGS_LANG();
+    var off = state && state.tzOffset;
+    var name = (typeof off === 'number' && isFinite(off)) ? zoneLabelFor(off) : I18n.t(L, 'cmTzLocal');
+    el.textContent = I18n.t(L, 'syncTzCurrent').replace('%s', name);
+  }
+
   function showAlarmToast(text) {
     var toast = byId('alarm-toast');
     if (!toast) return;
     var L = STRINGS_LANG();
-    byId('alarm-toast-body').textContent = I18n.t(L, 'alarmMsg').replace('%s', text);
-    toast.hidden = false;
+    var seconds = Math.min(600, Math.max(5, Number(state.alarmRingSeconds) || 30));
+    if (ringTimeout) { clearTimeout(ringTimeout); ringTimeout = null; }
     Alarm.setFiring(true);
     if (state.alarmSound) Alarm.startRing();
+    ringTimeout = setTimeout(hideAlarmToast, seconds * 1000);
+    if (Prefs.isNative) {
+      // 原生：独立居中窗口（屏幕正中，按钮不在 drag region 内）。
+      var actions = [
+        { action: 'mute', label: I18n.t(L, 'alarmMute') },
+        { action: 'snooze', label: I18n.t(L, 'alarmSnooze') },
+        { action: 'terminate', label: I18n.t(L, 'alarmStop') },
+        { action: 'dismiss', label: I18n.t(L, 'alarmDismiss') }
+      ];
+      Prefs.showAlert({
+        kind: 'alarm',
+        title: I18n.t(L, 'alarmRinging'),
+        body: I18n.t(L, 'alarmMsg').replace('%s', text),
+        note: I18n.t(L, 'alertAutoStop').replace('%s', String(seconds)),
+        actions: actions, lang: L
+      });
+      return;
+    }
+    // 浏览器预览：保留旧 DOM 弹窗，供 7 套回归使用。
+    byId('alarm-toast-body').textContent = I18n.t(L, 'alarmMsg').replace('%s', text);
+    toast.hidden = false;
     try {
       var AC = window.__TAURI__ && window.__TAURI__.webviewWindow;
       if (AC && AC.getCurrentWebviewWindow) AC.getCurrentWebviewWindow().setFocus().catch(function () {});
@@ -910,8 +952,11 @@
   function hideAlarmToast() {
     var toast = byId('alarm-toast');
     if (toast) toast.hidden = true;
+    if (ringTimeout) { clearTimeout(ringTimeout); ringTimeout = null; }
     Alarm.setFiring(false);
     Alarm.stopRing();
+    if (Prefs.isNative) Prefs.closeAlert();
+    var mb = byId('alarm-mute'); if (mb) mb.disabled = false;
   }
 
   function renderAlarmList() {
@@ -991,7 +1036,12 @@
     byId('analog-theme-row').hidden = state.style !== 'analog';
     byId('pref-clickthrough').checked = !!state.clickThrough;
     byId('pref-alarm-sound').checked = !!state.alarmSound;
+    byId('alarm-ring-seconds').value = String(Math.min(600, Math.max(5, Number(state.alarmRingSeconds) || 30)));
+    byId('timer-warn-mode').value = state.timerWarnMode === 'silent' ? 'silent' : 'popup';
+    byId('timer-warn-seconds').value = String(Math.min(300, Math.max(5, Number(state.timerWarnSeconds) || 30)));
+    byId('timer-warn-seconds').disabled = state.timerWarnMode === 'silent';
     byId('pref-auto-timesync').checked = !!state.autoTimeSync;
+    syncTzInfo();
     byId('shutdown-action').value = state.timerAction;
     byId('shutdown-mode').value = state.timerMode;
     syncTimerModeUI();
@@ -1216,7 +1266,15 @@
     });
     byId('alarm-toast-close').addEventListener('click', hideAlarmToast);
     byId('alarm-dismiss').addEventListener('click', hideAlarmToast);
+    byId('alarm-stop').addEventListener('click', hideAlarmToast);
     byId('alarm-mute').addEventListener('click', function () { Alarm.stopRing(); this.disabled = true; });
+    byId('alarm-ring-seconds').addEventListener('change', function (e) {
+      changed({ alarmRingSeconds: Math.min(600, Math.max(5, Number(e.target.value) || 30)) });
+    });
+    byId('timer-warn-mode').addEventListener('change', function (e) { changed({ timerWarnMode: e.target.value }); });
+    byId('timer-warn-seconds').addEventListener('change', function (e) {
+      changed({ timerWarnSeconds: Math.min(300, Math.max(5, Number(e.target.value) || 30)) });
+    });
     byId('alarm-snooze').addEventListener('click', function () {
       var list = (state.alarms || []).slice();
       list.push(Alarm.snooze());
@@ -1233,7 +1291,9 @@
       var mode = byId('shutdown-mode').value;
       var mins = Number(byId('shutdown-min').value) || 60;
       var hhmm = byId('shutdown-time').value;
-      Alarm.scheduleTimer(action, mode, mins, hhmm).then(function (label) {
+      var warnMode = byId('timer-warn-mode').value;
+      var warnSeconds = Math.min(300, Math.max(5, Number(byId('timer-warn-seconds').value) || 30));
+      Alarm.scheduleTimer(action, mode, mins, hhmm, warnMode, warnSeconds).then(function (label) {
         timerTarget = { label: label, action: action };
         updateTimerUI();
       }).catch(function (err) { byId('shutdown-status').textContent = String(err || 'failed'); });
@@ -1354,8 +1414,52 @@
     bindWheelSelects();   // v0.5：滚轮切换下拉
 
     if (!isSettingsWindow) {
-      setWindowSize(state.scale);
+      // 先建时钟 DOM 再测量 #app 内容尺寸，否则首帧可能量到空容器。
       startEngine(state.style === 'flip');
+      setWindowSize(state.scale);
+      if (Prefs.isNative) {
+        // 字体加载会改变内容宽度；待首帧与字体就绪后再校正一次。
+        setTimeout(function () { setWindowSize(state.scale); }, 250);
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function () { setWindowSize(state.scale); }).catch(function () {});
+        }
+      }
+    }
+
+    // v0.6.2：原生弹窗按钮动作与定时任务提前提醒（仅主时钟窗口处理，避免多窗口重复弹窗）。
+    if (Prefs.isNative && !isSettingsWindow && !isExtraWindow) {
+      Prefs.listen('alert-action', function (p) {
+        if (!p || !p.action) return;
+        if (p.action === 'mute') { Alarm.stopRing(); return; }
+        if (p.action === 'snooze') {
+          var list = (state.alarms || []).slice();
+          list.push(Alarm.snooze());
+          changed({ alarms: list });
+          hideAlarmToast();
+          return;
+        }
+        if (p.action === 'terminate' && p.kind === 'timer') {
+          timerTarget = null; updateTimerUI();
+          hideAlarmToast();
+          return;
+        }
+        hideAlarmToast();
+      });
+      Prefs.listen('timer-warning', function (p) {
+        if (!p) return;
+        var L = STRINGS_LANG();
+        var actName = I18n.t(L, p.action === 'reboot' ? 'alertActionReboot' : 'alertActionShutdown');
+        Prefs.showAlert({
+          kind: 'timer',
+          title: I18n.t(L, 'alertTimerTitle'),
+          body: I18n.t(L, 'alertTimerBody').replace('%s', String(p.label || '')).replace('%s', String(p.warnSeconds || 30)).replace('%s', actName),
+          note: '', lang: L,
+          actions: [
+            { action: 'terminate', label: I18n.t(L, 'alertTerminate') },
+            { action: 'dismiss', label: I18n.t(L, 'alarmDismiss') }
+          ]
+        });
+      });
     }
 
     Prefs.onChanged(applyRemotePrefs);
@@ -1384,6 +1488,9 @@
           ensureDom(engine.buildParts(n), true);
           renderFrame({ parts: engine.buildParts(n), now: n });
         }
+        // v0.6.2：其它窗口/设置页改了本窗口配置后，重新测量内容尺寸并
+        // 校正外壳，避免内容变宽被裁切、九宫格贴边失准。
+        if (!isSettingsWindow) setWindowSize(state.scale);
       }
     });
 

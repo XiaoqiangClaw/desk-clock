@@ -172,7 +172,6 @@ with sync_playwright() as pw:
     settings.locator("#donate-toggle").click()
     settings.wait_for_timeout(120)
     check("dedicated window QR loads", settings.locator("#donate-img").evaluate("img => img.complete && img.naturalWidth > 100"))
-    settings.screenshot(path=str(OUT / "settings-window-v03.png"), full_page=True)
 
     # ---------------- cross-window broadcast (v0.6 语义) ----------------
     # 全局广播只负责全局项；窗口项(style/showSeconds)走 window-prefs-changed

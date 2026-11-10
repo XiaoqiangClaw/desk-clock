@@ -59,10 +59,16 @@ pub struct Prefs {
     pub alarm_sound: bool,
     /// v0.5: alarm ring tone id (gentle|bell|tick|rise|chord|custom).
     pub alarm_tone: String,
+    /// v0.6.2: alarm ring duration (seconds), auto-stop.
+    pub alarm_ring_seconds: f64,
     /// v0.4: "shutdown" | "reboot".
     pub timer_action: String,
     /// v0.4: "duration" | "clock".
     pub timer_mode: String,
+    /// v0.6.2: "popup" | "silent".
+    pub timer_warn_mode: String,
+    /// v0.6.2: warn this many seconds before the OS action.
+    pub timer_warn_seconds: f64,
     /// v0.4: request OS time sync at startup.
     pub auto_time_sync: bool,
     /// v0.4/v0.5: extra timezone windows [{id,label,offsetMinutes,style?,showSeconds?,visible?}].
@@ -98,8 +104,11 @@ impl Default for Prefs {
             alarms: Vec::new(),
             alarm_sound: true,
             alarm_tone: "gentle".into(),
+            alarm_ring_seconds: 30.0,
             timer_action: "shutdown".into(),
             timer_mode: "duration".into(),
+            timer_warn_mode: "popup".into(),
+            timer_warn_seconds: 30.0,
             auto_time_sync: false,
             extra_clocks: Vec::new(),
             run_as_admin: false,
@@ -178,6 +187,15 @@ struct PrivilegeStatus {
 struct TimerInfo {
     label: String,
     action: String,
+}
+
+/// v0.6.2：generation 让「取消 / 重新排程」即时作废旧的提醒线程。
+#[derive(Debug, Clone, Default)]
+struct TimerSnapshot {
+    info: Option<TimerInfo>,
+    generation: u64,
+    warn_seconds: f64,
+    warn_mode: String,
 }
 
 fn platform_name() -> &'static str {
@@ -514,7 +532,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock · 设置")
+    .title("Desk Clock v0.6.2 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -629,8 +647,12 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock · {}", label))
-    .inner_size(640.0, 220.0)
+    .title(format!("Desk Clock v0.6.2 · {}", label))
+    // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
+    .inner_size(
+        cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
+        cfg.get("h").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(220.0),
+    )
     .min_inner_size(240.0, 96.0)
     .resizable(false)
     .decorations(false)
@@ -967,7 +989,14 @@ fn set_window_prefs(
             let _ = win.set_ignore_cursor_events(v);
         }
         if let Some(sc) = cfg.get("scale").and_then(|x| x.as_f64()) {
-            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(640.0 * sc, 220.0 * sc)));
+            // v0.6.2：优先用前端测量并持久化的内容尺寸，避免透明外壳贴边时可见内容离边太远。
+            let cw = cfg.get("w").and_then(|x| x.as_f64());
+            let ch = cfg.get("h").and_then(|x| x.as_f64());
+            let (w, h) = match (cw, ch) {
+                (Some(w), Some(h)) if w > 0.0 && h > 0.0 => (w, h),
+                _ => (640.0 * sc, 220.0 * sc),
+            };
+            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
         }
     }
 
@@ -986,14 +1015,41 @@ fn set_window_geometry(
     x: Option<f64>,
     y: Option<f64>,
     scale: Option<f64>,
+    w: Option<f64>,
+    h: Option<f64>,
 ) -> Result<(), String> {
     let win_label = if id == "main" { "main".to_string() } else { format!("clock-{}", id) };
     let win = app
         .get_webview_window(&win_label)
         .ok_or_else(|| "window missing".to_string())?;
-    if let Some(sc) = scale {
+    // v0.6.2：w/h = #app 内容尺寸（逻辑像素）。持久化到 clocks.json，
+    // 供重启建窗与 preset_position_for 的 outer_size() 贴边计算使用。
+    let (cw, ch) = match (w, h) {
+        (Some(w), Some(h)) if w > 0.0 && h > 0.0 => (Some(w), Some(h)),
+        _ => (None, None),
+    };
+    if let (Some(w), Some(h)) = (cw, ch) {
+        win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)))
+            .map_err(|e| e.to_string())?;
+    } else if let Some(sc) = scale {
         win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(640.0 * sc, 220.0 * sc)))
             .map_err(|e| e.to_string())?;
+    }
+    if let (Some(w), Some(h)) = (cw, ch) {
+        let legacy = app
+            .try_state::<PrefsState>()
+            .and_then(|s| s.0.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        let mut all = read_clocks(&app, &legacy);
+        let mut cfg = ensure_clock_cfg(&mut all, &id);
+        if let Some(o) = cfg.as_object_mut() {
+            o.insert("w".into(), serde_json::json!(w));
+            o.insert("h".into(), serde_json::json!(h));
+        }
+        if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
+            clocks.insert(id.clone(), cfg);
+        }
+        let _ = write_clocks(&app, &all);
     }
     if let (Some(x), Some(y)) = (x, y) {
         win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
@@ -1194,7 +1250,7 @@ fn build_tray(app: &AppHandle) -> Result<(), String> {
 
 // ------------------------------------------------------------- OS timer
 
-struct TimerState(Mutex<Option<TimerInfo>>);
+struct TimerState(Mutex<TimerSnapshot>);
 
 /// `reboot` switches the shutdown flag on every supported platform.
 #[cfg(target_os = "windows")]
@@ -1268,6 +1324,9 @@ fn os_cancel() -> Result<(), String> {
 
 /// `label` is computed on the JS side from a real local Date, so the displayed
 /// time always matches the user's actual timezone (including next-day targets).
+/// v0.6.2: a popup warning is emitted `warn_seconds` before the OS action;
+/// "silent" mode skips it. A generation counter invalidates stale warning
+/// threads whenever the timer is cancelled or re-scheduled.
 #[tauri::command]
 fn schedule_timer(
     state: State<'_, TimerState>,
@@ -1275,46 +1334,85 @@ fn schedule_timer(
     action: String,
     minutes: f64,
     label: String,
+    warn_mode: Option<String>,
+    warn_seconds: Option<f64>,
 ) -> Result<String, String> {
     let mins = minutes.max(1.0).min(1440.0);
     let seconds = (mins * 60.0) as u64;
     let act = if action == "reboot" { "reboot" } else { "shutdown" };
+    let mode = if warn_mode.as_deref() == Some("silent") { "silent" } else { "popup" };
+    let ahead = warn_seconds.unwrap_or(30.0).max(5.0).min(300.0);
     os_schedule(seconds, act == "reboot")?;
-    *state.0.lock().map_err(|e| e.to_string())? = Some(TimerInfo {
-        label: label.clone(),
-        action: act.into(),
-    });
+    let generation = {
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        guard.generation = guard.generation.wrapping_add(1);
+        guard.info = Some(TimerInfo { label: label.clone(), action: act.into() });
+        guard.warn_mode = mode.into();
+        guard.warn_seconds = ahead;
+        guard.generation
+    };
     // Persist the choice so the UI restores it after a settings-window reload.
     patch_prefs(&app, "timerAction", serde_json::json!(act));
+    patch_prefs(&app, "timerWarnMode", serde_json::json!(mode));
+    patch_prefs(&app, "timerWarnSeconds", serde_json::json!(ahead));
+    if mode == "popup" {
+        let app2 = app.clone();
+        let act2 = act.to_string();
+        let label2 = label.clone();
+        let wait = seconds.saturating_sub(ahead.max(0.0) as u64);
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait);
+            loop {
+                let expired = {
+                    let guard = match app2.try_state::<TimerState>() {
+                        Some(s) => s,
+                        None => return,
+                    };
+                    let g = match guard.0.lock() { Ok(g) => g, Err(_) => return };
+                    g.generation != generation || g.info.is_none()
+                };
+                if expired { return; }
+                if std::time::Instant::now() >= deadline {
+                    let _ = app2.emit("timer-warning", serde_json::json!({
+                        "action": act2, "label": label2, "warnSeconds": ahead
+                    }));
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+    }
     Ok(label)
 }
 
-#[tauri::command]
-fn cancel_timer(state: State<'_, TimerState>) -> Result<(), String> {
+fn cancel_timer_inner(app: &AppHandle, state: &State<'_, TimerState>) -> Result<(), String> {
     os_cancel()?;
-    *state.0.lock().map_err(|e| e.to_string())? = None;
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    guard.info = None;
+    guard.generation = guard.generation.wrapping_add(1);
+    let _ = app.emit("timer-cancelled", ());
     Ok(())
+}
+
+#[tauri::command]
+fn cancel_timer(state: State<'_, TimerState>, app: AppHandle) -> Result<(), String> {
+    cancel_timer_inner(&app, &state)
 }
 
 #[tauri::command]
 fn get_timer_status(state: State<'_, TimerState>) -> Result<Option<TimerInfo>, String> {
-    Ok(state.0.lock().map_err(|e| e.to_string())?.clone())
+    Ok(state.0.lock().map_err(|e| e.to_string())?.info.clone())
 }
 
 // Backwards-compatible aliases (v0.3 callers).
 #[tauri::command]
-fn schedule_shutdown(state: State<'_, TimerState>, minutes: f64, label: String) -> Result<String, String> {
-    let mins = minutes.max(1.0).min(1440.0);
-    os_schedule((mins * 60.0) as u64, false)?;
-    *state.0.lock().map_err(|e| e.to_string())? = Some(TimerInfo { label: label.clone(), action: "shutdown".into() });
-    Ok(label)
+fn schedule_shutdown(state: State<'_, TimerState>, app: AppHandle, minutes: f64, label: String) -> Result<String, String> {
+    schedule_timer(state, app, "shutdown".into(), minutes, label, Some("silent".into()), None)
 }
 
 #[tauri::command]
-fn cancel_shutdown(state: State<'_, TimerState>) -> Result<(), String> {
-    os_cancel()?;
-    *state.0.lock().map_err(|e| e.to_string())? = None;
-    Ok(())
+fn cancel_shutdown(state: State<'_, TimerState>, app: AppHandle) -> Result<(), String> {
+    cancel_timer_inner(&app, &state)
 }
 
 #[tauri::command]
@@ -1323,8 +1421,73 @@ fn get_shutdown_status(state: State<'_, TimerState>) -> Result<Option<String>, S
         .0
         .lock()
         .map_err(|e| e.to_string())?
+        .info
         .as_ref()
         .map(|t| t.label.clone()))
+}
+
+// ------------------------------------------------------------- alert popup
+
+/// v0.6.2: 独立、屏幕居中的提醒窗口（闹钟 / 定时任务提前提醒）。
+/// 用独立静态页 `alert.html` 渲染，无 drag-region，按钮必然可点。
+#[tauri::command]
+fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("alert") {
+        let _ = app.emit("alert-payload", payload);
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    let init = format!(
+        "window.__DC_ALERT__={};",
+        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".into())
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "alert",
+        WebviewUrl::App(PathBuf::from("alert.html")),
+    )
+    .title("Desk Clock v0.6.2 · 提醒")
+    .inner_size(360.0, 220.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .shadow(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .center()
+    .initialization_script(init.as_str())
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn close_alert(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("alert") {
+        let _ = win.close();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn alert_action(
+    app: AppHandle,
+    state: State<'_, TimerState>,
+    action: String,
+    kind: String,
+) -> Result<(), String> {
+    if action == "terminate" && kind == "timer" {
+        let _ = cancel_timer_inner(&app, &state);
+    }
+    let _ = app.emit(
+        "alert-action",
+        serde_json::json!({ "action": action, "kind": kind }),
+    );
+    if let Some(win) = app.get_webview_window("alert") {
+        let _ = win.close();
+    }
+    Ok(())
 }
 
 /// Restore a remembered position for ANY clock window.
@@ -1415,7 +1578,7 @@ pub fn run() {
 
             let prefs = read_prefs(handle);
             app.manage(PrefsState(Mutex::new(prefs.clone())));
-            app.manage(TimerState(Mutex::new(None)));
+            app.manage(TimerState(Mutex::new(TimerSnapshot::default())));
 
             {
                 let mut all = read_clocks(handle, &prefs);
@@ -1430,11 +1593,16 @@ pub fn run() {
                 let scale = main_cfg
                     .get("scale").and_then(|v| v.as_f64())
                     .unwrap_or(prefs.scale);
+                // v0.6.2：启动时优先用持久化的内容尺寸，避免贴边不对称；
+                // 前端 boot 后还会再测量一次并校正。
+                let mw = main_cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0);
+                let mh = main_cfg.get("h").and_then(|v| v.as_f64()).filter(|v| *v > 0.0);
                 if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                        640.0 * scale,
-                        220.0 * scale,
-                    )));
+                    let (w, h) = match (mw, mh) {
+                        (Some(w), Some(h)) => (w, h),
+                        _ => (640.0 * scale, 220.0 * scale),
+                    };
+                    let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
                     let _ = win.set_always_on_top(on_top);
                     if click_through {
                         let _ = win.set_ignore_cursor_events(true);
@@ -1557,7 +1725,10 @@ pub fn run() {
             get_timer_status,
             schedule_shutdown,
             cancel_shutdown,
-            get_shutdown_status
+            get_shutdown_status,
+            show_alert,
+            close_alert,
+            alert_action
         ])
         .run(tauri::generate_context!())
         .expect("error while running Desk Clock");

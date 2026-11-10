@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Desk Clock · 提醒</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: transparent; overflow: hidden;
+    font: 12.5px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: #f2f3f5; user-select: none; -webkit-user-select: none;
+  }
+  .wrap { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+  .card {
+    width: 100%; box-sizing: border-box; padding: 14px 16px;
+    border-radius: 14px; background: rgba(24,26,31,.97);
+    border: 1px solid rgba(255,200,120,.42);
+    box-shadow: 0 18px 48px rgba(0,0,0,.58);
+  }
+  .head { display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 600; color: #ffce8a; }
+  .head button {
+    border: 0; background: transparent; color: inherit; font-size: 18px; line-height: 1;
+    cursor: pointer; padding: 0 2px; opacity: .8;
+  }
+  .head button:hover { opacity: 1; }
+  .body { margin: 10px 0 6px; font-size: 13px; }
+  .note { font-size: 10.5px; color: #9aa1ad; min-height: 0; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .actions button {
+    font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #e9ebef;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .actions button:hover { background: rgba(255,255,255,.12); }
+  .actions button.primary { background: rgba(108,199,255,.18); border-color: rgba(108,199,255,.55); color: #cdeeff; }
+  .actions button.danger { background: rgba(255,120,110,.16); border-color: rgba(255,120,110,.5); color: #ffd2b0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="head"><span id="title">提醒</span><button id="close" type="button" aria-label="关闭">&times;</button></div>
+    <div class="body" id="body"></div>
+    <div class="note" id="note"></div>
+    <div class="actions" id="actions"></div>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var payload = window.__DC_ALERT__ || { kind: 'alarm', title: '提醒', body: '', actions: [] };
+
+  function invoke(cmd, args) {
+    try {
+      var core = window.__TAURI__ && window.__TAURI__.core;
+      if (!core || typeof core.invoke !== 'function') return Promise.resolve();
+      return core.invoke(cmd, args || {});
+    } catch (e) { return Promise.resolve(); }
+  }
+
+  function send(action) {
+    invoke('alert_action', { action: action, kind: payload.kind || 'alarm' });
+  }
+
+  function render() {
+    document.getElementById('title').textContent = payload.title || '';
+    document.getElementById('body').textContent = payload.body || '';
+    document.getElementById('note').textContent = payload.note || '';
+    var box = document.getElementById('actions');
+    box.textContent = '';
+    (payload.actions || []).forEach(function (a) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = a.label || a.action;
+      if (a.primary) b.className = 'primary';
+      else if (a.action === 'terminate') b.className = 'danger';
+      b.addEventListener('click', function () { send(a.action); });
+      box.appendChild(b);
+    });
+  }
+
+  document.getElementById('close').addEventListener('click', function () { send('dismiss'); });
+
+  // Rust 更新内容时（窗口复用）重新渲染。
+  try {
+    var ev = window.__TAURI__ && window.__TAURI__.event;
+    if (ev && typeof ev.listen === 'function') {
+      ev.listen('alert-payload', function (e) {
+        if (e && e.payload) { payload = e.payload; render(); }
+      });
+    }
+  } catch (e) { /* ignore */ }
+
+  render();
+})();
+</script>
+</body>
+</html>

@@ -23,8 +23,11 @@
     alarms: [],                // [{time:"HH:MM", repeat:bool, id:string}]
     alarmSound: true,          // v0.4: 闹钟响铃
     alarmTone: 'gentle',       // v0.5: gentle|bell|tick|rise|chord|custom
+    alarmRingSeconds: 30,      // v0.6.2: 闹钟响铃时长（秒），到点自动停
     timerAction: 'shutdown',   // v0.4: shutdown | reboot
     timerMode: 'duration',     // v0.4: duration | clock
+    timerWarnMode: 'popup',    // v0.6.2: popup | silent（定时动作前是否弹窗）
+    timerWarnSeconds: 30,      // v0.6.2: 提前多少秒弹窗提醒
     autoTimeSync: false,       // v0.4: 启动时自动校时
     extraClocks: [],           // v0.5: [{id,label,offset,style,showSeconds,visible}] 窗口管理器
     tzOffset: null,            // v0.6: 每窗口时区偏移（分钟，null=本机时间）
@@ -52,8 +55,9 @@
   var supportsWindowApi = false;   // v0.6：后端是否提供每窗口配置 API
 
   // 全局项（所有窗口共享）vs 每窗口项。save() 按此分流。
-  var GLOBAL_KEYS = ['lang', 'alarms', 'alarmSound', 'alarmTone', 'timerAction',
-    'timerMode', 'autoTimeSync', 'autostart', 'runAsAdmin', 'extraClocks'];
+  var GLOBAL_KEYS = ['lang', 'alarms', 'alarmSound', 'alarmTone', 'alarmRingSeconds',
+    'timerAction', 'timerMode', 'timerWarnMode', 'timerWarnSeconds',
+    'autoTimeSync', 'autostart', 'runAsAdmin', 'extraClocks'];
   var WINDOW_KEYS = ['style', 'showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop',
     'backdrop', 'scale', 'opacity', 'font', 'customFont', 'color', 'customColor',
     'analogTheme', 'analogPenetrate', 'clickThrough', 'tzOffset', 'tzLabel', 'x', 'y'];
@@ -105,6 +109,9 @@
     if (obj.analogTheme === 'dark' || obj.analogTheme === 'light') out.analogTheme = obj.analogTheme;
     if (obj.timerAction === 'shutdown' || obj.timerAction === 'reboot') out.timerAction = obj.timerAction;
     if (obj.timerMode === 'duration' || obj.timerMode === 'clock') out.timerMode = obj.timerMode;
+    if (isFinite(obj.alarmRingSeconds)) out.alarmRingSeconds = Math.min(600, Math.max(5, Math.round(Number(obj.alarmRingSeconds))));
+    if (isFinite(obj.timerWarnSeconds)) out.timerWarnSeconds = Math.min(300, Math.max(5, Math.round(Number(obj.timerWarnSeconds))));
+    if (obj.timerWarnMode === 'popup' || obj.timerWarnMode === 'silent') out.timerWarnMode = obj.timerWarnMode;
     if (TONES.indexOf(obj.alarmTone) >= 0) out.alarmTone = obj.alarmTone;
     if (Array.isArray(obj.alarms)) {
       out.alarms = obj.alarms.filter(function (a) {
@@ -354,10 +361,22 @@
       .catch(function () { return null; });
   }
 
-  function setWindowGeometry(id, x, y, scale) {
+  function setWindowGeometry(id, x, y, scale, size) {
     if (!isNative) return Promise.resolve(null);
-    return invoke('set_window_geometry', { id: id, x: x, y: y, scale: scale })
-      .catch(function () { return null; });
+    // v0.6.2：size = {w,h} 为 #app 内容尺寸（逻辑像素）；缺省时 Rust 用已存尺寸。
+    return invoke('set_window_geometry', {
+      id: id, x: x, y: y, scale: scale,
+      w: size ? size.w : null, h: size ? size.h : null
+    }).catch(function () { return null; });
+  }
+
+  function showAlert(payload) {
+    if (!isNative) return Promise.resolve(null);
+    return invoke('show_alert', { payload: payload }).catch(function () { return null; });
+  }
+  function closeAlert() {
+    if (!isNative) return Promise.resolve(null);
+    return invoke('close_alert').catch(function () { return null; });
   }
 
   function getAutostart() {
@@ -542,6 +561,7 @@
     resetDefaults: function () { return save(clone(DEFAULTS)); },
     setWindowPosition: setWindowPosition,
     setWindowGeometry: setWindowGeometry,
+    showAlert: showAlert, closeAlert: closeAlert,
     getAutostart: getAutostart,
     setAutostart: setAutostart,
     onChanged: onChanged,

@@ -199,10 +199,12 @@ html, body {
 .settings input, .settings select, .settings button { cursor: pointer; }
 
 .settings-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 12px;
   padding: 12px 14px; border-bottom: 1px solid var(--s-line);
   font-weight: 600; letter-spacing: .02em;
 }
+/* v0.6.2：关闭按钮推最右；其余元素靠左依次排列 */
+.settings-head #settings-close { margin-left: auto; }
 .settings-head .brand { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
 /* v0.6.1：头部「正在编辑」与下拉框同一行 */
 .settings-head .head-target { display: inline-flex; align-items: center; gap: 8px; }
@@ -416,14 +418,16 @@ button.perm-btn:disabled { opacity: .45; cursor: not-allowed; }
 .about-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 10.5px; color: var(--s-dim); border-top: 1px solid var(--s-line); padding-top: 10px; margin-top: 4px; }
 #about-version::before { content: "v"; }
 
-/* 闹钟 toast：更小巧精致 */
+/* 闹钟 toast：更小巧精致。
+v0.6.2：必须给所有子元素 no-drag，否则 #app 的 drag region 会吞掉按钮点击。 */
+.alarm-toast, .alarm-toast * { -webkit-app-region: no-drag; }
 .alarm-toast {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
   width: 226px; padding: 12px; border-radius: 12px;
   background: rgba(24,26,31,.97); border: 1px solid rgba(255,200,120,.4);
   box-shadow: 0 14px 40px rgba(0,0,0,.55); color: #f2f3f5;
   font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-  z-index: 90; -webkit-app-region: no-drag;
+  z-index: 90; cursor: default;
 }
 .alarm-toast-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: #ffce8a; }
 .alarm-toast-head button { border: 0; background: transparent; color: inherit; font-size: 17px; line-height: 1; cursor: pointer; }

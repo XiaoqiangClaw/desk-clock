@@ -16,8 +16,6 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 UI_DIR = ROOT / "ui"
-OUT = ROOT / ".preview"
-OUT.mkdir(exist_ok=True)
 CHROME = os.environ.get("CHROMIUM", "/usr/bin/chromium")
 
 results = []
@@ -92,7 +90,6 @@ with sync_playwright() as pw:
           and page.locator('[data-i18n="style"]').inner_text() == "Clock style")
     check("English option labels", page.locator("#pref-style option[value='flip']").inner_text() == "Flip")
     check("English persisted", prefs(page).get("lang") == "en")
-    page.screenshot(path=str(OUT / "settings-en.png"), omit_background=True)
     page.locator("#pref-lang").select_option("zh-CN")
     page.wait_for_timeout(200)
 
@@ -212,7 +209,6 @@ with sync_playwright() as pw:
     check("browser mode honestly reports unsupported",
           "不支持" in page.locator("#shutdown-status").inner_text(),
           page.locator("#shutdown-status").inner_text())
-    page.screenshot(path=str(OUT / "settings-zh.png"), omit_background=True)
 
     # ---------- resize grip ----------
     boot(page, {"scale": 1, "lang": "zh-CN"})

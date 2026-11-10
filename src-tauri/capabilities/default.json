@@ -1,8 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main clock, the independent settings window and any extra timezone clock windows. Window mutations, tray, autostart, links and preference writes are all Rust commands (no plugin JS permissions needed).",
-  "windows": ["main", "settings", "clock-*"],
+  "description": "Permissions for the main clock, independent settings window, extra clock windows and the centered alert popup. Window mutations, tray, autostart, links and preference writes are all Rust commands.",
+  "windows": [
+    "main",
+    "settings",
+    "clock-*",
+    "alert"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

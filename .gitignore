@@ -4,7 +4,7 @@ src-tauri/gen/
 node_modules/
 
 # Local runtime state
-# .preview/*.png 为仓库自带的 8 张样式预览图，纳入版本控制供 README 引用
+# .preview/*.png 为仓库自带的 11 张预览图（8 张样式 + 3 张设置界面），纳入版本控制供 README 引用
 *.log
 
 # OS junk
