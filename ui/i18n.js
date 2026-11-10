@@ -44,13 +44,14 @@
       syncNote: '校时调用操作系统自带的时间服务，不会修改本程序之外的任何数据。',
       syncUnsupported: '此环境不支持自动校时',
       syncOk: '已请求系统校时', syncFail: '校时失败（可能需要管理员权限）：%s',
-      grpClockManager: '多时区窗口管理器',
-      cmNote: '可开启多个独立时钟窗口，每个都能设置任意时区、样式与显示项；新窗口会自动错开位置，且不会遮挡或拦截其它应用的点击。',
+      grpClockManager: '窗口管理',
+      cmNote: '每个窗口都是全功能窗口；添加后点卡片「设置」或用顶部「正在编辑」下拉框，即可分别设置样式、时区、颜色、大小、位置等。',
       cmName: '名称', cmZone: '时区', cmCustomZone: '自定义 UTC 偏移', cmOffsetHint: '格式 ±HH:MM，如 +05:30 / -08:00',
       cmStyle: '窗口样式', cmStyleGlobal: '跟随全局（推荐）', cmShowSeconds: '显示秒',
-      cmAdd: '＋ 添加窗口', cmEmpty: '还没有时钟窗口，先在上方添加一个吧',
-      cmEdit: '编辑', cmHide: '隐藏', cmShow: '显示', cmDelete: '删除',
-      cmRunning: '运行中', cmStopped: '已隐藏', cmEditHint: '编辑后点「保存修改」重建窗口', cmSave: '保存修改', cmCancel: '取消编辑',
+      cmAdd: '＋ 添加窗口', cmEmpty: '目前只有主窗口，点上方按钮添加新窗口',
+      cmNamePlaceholder: '窗口名称（可选）', cmWindow: '窗口', cmMainHint: '默认窗口 · 不可删除', cmMainTag: '主窗口',
+      cmEdit: '重命名', cmHide: '隐藏', cmShow: '显示', cmDelete: '删除',
+      cmRunning: '运行中', cmStopped: '已隐藏', cmEditHint: '改名后点「保存」生效', cmSave: '保存修改', cmCancel: '取消编辑',
       cmSettings: '设置', cmMain: '主窗口', cmTimezone: '时区', cmTzLocal: '本机时间',
       editingClock: '正在编辑', cmFullSettings: '每个窗口都能独立设置样式、颜色、字体、大小、位置、时区等；用顶部的「正在编辑」切换目标窗口。',
       extraBrowserOnly: '（浏览器预览：仅记录配置，不创建窗口）',
@@ -125,13 +126,14 @@
       syncNote: 'Uses the OS built-in time service; no other data is touched.',
       syncUnsupported: 'Auto time sync not supported here',
       syncOk: 'System time sync requested', syncFail: 'Sync failed (admin may be required): %s',
-      grpClockManager: 'Multi-timezone manager',
-      cmNote: 'Open several independent clock windows, each with its own UTC offset, style and display options. New windows are offset automatically and never block clicks on other apps.',
+      grpClockManager: 'Window manager',
+      cmNote: 'Every window is fully configurable. After adding one, use its Settings button or the "Editing" selector at the top to set style, time zone, colour, size and position independently.',
       cmName: 'Name', cmZone: 'Time zone', cmCustomZone: 'Custom UTC offset', cmOffsetHint: 'Format ±HH:MM, e.g. +05:30 / -08:00',
       cmStyle: 'Window style', cmStyleGlobal: 'Follow global', cmShowSeconds: 'Show seconds',
-      cmAdd: '＋ Add window', cmEmpty: 'No clock windows yet — add one above',
-      cmEdit: 'Edit', cmHide: 'Hide', cmShow: 'Show', cmDelete: 'Delete',
-      cmRunning: 'Running', cmStopped: 'Hidden', cmEditHint: 'Edit above, then Save to rebuild this window', cmSave: 'Save', cmCancel: 'Cancel',
+      cmAdd: '＋ Add window', cmEmpty: 'Only the main window so far — add one above',
+      cmNamePlaceholder: 'Window name (optional)', cmWindow: 'Window', cmMainHint: 'Default window · cannot be removed', cmMainTag: 'Main',
+      cmEdit: 'Rename', cmHide: 'Hide', cmShow: 'Show', cmDelete: 'Delete',
+      cmRunning: 'Running', cmStopped: 'Hidden', cmEditHint: 'Click Save to apply the new name', cmSave: 'Save', cmCancel: 'Cancel',
       cmSettings: 'Settings', cmMain: 'Main clock', cmTimezone: 'Time zone', cmTzLocal: 'Local time',
       editingClock: 'Editing', cmFullSettings: 'Every window has its own style, colour, font, size, position and time zone. Use the "Editing" selector at the top to switch target.',
       extraBrowserOnly: '(browser preview: config only, no window created)',
@@ -186,6 +188,10 @@
       if (nodes[i].hasAttribute('data-dyn')) continue;
       nodes[i].textContent = t(L, nodes[i].getAttribute('data-i18n'));
     }
+    var phs = document.querySelectorAll('[data-i18n-placeholder]');
+    for (var q = 0; q < phs.length; q++) {
+      phs[q].placeholder = t(L, phs[q].getAttribute('data-i18n-placeholder'));
+    }
     function opts(id, group) {
       var sel = document.getElementById(id);
       if (!sel) return;
@@ -204,8 +210,6 @@
     opts('pref-alarm-tone', 'tones');
     var gear = document.getElementById('gear');
     if (gear) { gear.title = t(L, 'gearTitle'); gear.setAttribute('aria-label', t(L, 'gearTitle')); }
-    var st = document.getElementById('settings-title');
-    if (st) st.textContent = t(L, 'settingsTitle');
     var rh = document.getElementById('resize-handle');
     if (rh) { rh.title = t(L, 'resizeTitle'); rh.setAttribute('aria-label', t(L, 'resizeTitle')); }
   }

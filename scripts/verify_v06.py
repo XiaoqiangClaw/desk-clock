@@ -163,16 +163,29 @@ with sync_playwright() as pw:
           c.get("clocks", {}).get("main", {}).get("tzOffset"))
 
     # --- create two windows via manager ---
-    gototab(page, "clocks")
-    for name, zone in [("东京", "540"), ("纽约", "-300")]:
+    gototab(page, "window")
+    for name in ["东京", "纽约"]:
         page.locator("#cm-name").fill(name)
-        page.locator("#cm-zone").select_option(zone)
         page.locator("#cm-add").click()
         page.wait_for_timeout(250)
     opts = page.evaluate("[...document.querySelectorAll('#target-clock option')].map(o=>({v:o.value,t:o.textContent}))")
     check("target selector lists main + 2 windows", len(opts) == 3, opts)
     tokyo = [o["v"] for o in opts if o["t"] == "东京"][0]
     ny = [o["v"] for o in opts if o["t"] == "纽约"][0]
+
+    # v0.6.1: the add form no longer sets a time zone (redundant config removed).
+    # Each window is fully configurable afterwards — give them distinct zones
+    # through the "Editing" selector + appearance page, then verify isolation.
+    page.locator("#target-clock").select_option(tokyo)
+    page.wait_for_timeout(350)
+    gototab(page, "appearance")
+    page.locator("#pref-tz").select_option("540")
+    page.wait_for_timeout(250)
+    page.locator("#target-clock").select_option(ny)
+    page.wait_for_timeout(350)
+    gototab(page, "appearance")
+    page.locator("#pref-tz").select_option("-300")
+    page.wait_for_timeout(250)
 
     # --- each window has a full independent config ---
     page.locator("#target-clock").select_option(tokyo)
@@ -207,8 +220,8 @@ with sync_playwright() as pw:
           page.locator("#pref-tz").input_value())
 
     # --- manager row has a Settings button that jumps to that window ---
-    gototab(page, "clocks")
-    first_settings = page.locator('#cm-list .cm-row button[data-cm-action="settings"]').first
+    gototab(page, "window")
+    first_settings = page.locator('#cm-list .cm-row:not(.cm-row-main) button[data-cm-action="settings"]').first
     check("manager rows expose a settings button", first_settings.count() == 1)
     first_settings.click()
     page.wait_for_timeout(350)

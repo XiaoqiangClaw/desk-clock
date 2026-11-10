@@ -204,6 +204,10 @@ html, body {
   font-weight: 600; letter-spacing: .02em;
 }
 .settings-head .brand { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+/* v0.6.1：头部「正在编辑」与下拉框同一行 */
+.settings-head .head-target { display: inline-flex; align-items: center; gap: 8px; }
+.settings-head .head-target label { display: inline; margin: 0; font-size: 12px; font-weight: 500; color: var(--s-dim); white-space: nowrap; }
+.settings-head .head-target select { min-width: 130px; }
 .brand-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--s-accent); box-shadow: 0 0 10px var(--s-accent); }
 #ver-badge { font-size: 10px; font-weight: 500; color: var(--s-dim); background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 20px; border: 0; cursor: pointer; transition: color .15s ease, background .15s ease; }
 #ver-badge:hover { color: var(--s-accent); background: var(--s-accent-soft); }
@@ -343,6 +347,14 @@ body[data-view="settings"] .cm-field .dc-select, body[data-view="settings"] .cm-
 .cm-row-title { font-size: 13px; font-weight: 600; color: var(--s-fg); }
 .cm-row-meta { font-size: 10.5px; color: var(--s-dim); font-variant-numeric: tabular-nums; }
 .cm-row-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+
+/* v0.6.1：窗口管理合并到「窗口」页，添加表单精简为名称 + 按钮 */
+.cm-add-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.cm-add-row .dc-input { flex: 1 1 170px; min-width: 120px; }
+.cm-add-row .dc-btn { flex: 0 0 auto; white-space: nowrap; }
+.cm-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.cm-row-main { border-color: rgba(108,199,255,.34); background: rgba(108,199,255,.07); }
+.cm-row-tag { font-size: 10px; color: var(--s-accent); margin-left: 6px; }
 
 /* 定时任务：输入框与启动/取消同行 */
 .shutdown-line { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; margin: 8px 0; }

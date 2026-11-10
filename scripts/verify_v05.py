@@ -239,36 +239,30 @@ with sync_playwright() as pw:
         check("start shares row with %s input" % mode, abs(ib["y"] - bb["y"]) < 14,
               (ib["y"], bb["y"]))
 
-    # 5) manager: arbitrary offset, per-window style, edit/hide/delete
-    gototab(page, "clocks")
-    check("manager is its own settings page",
-          page.locator('#settings-tabs .tab[data-tab="clocks"]').count() == 1
-          and page.locator('[data-panel="clocks"] #cm-list').count() == 1)
+    # 5) manager merged into Window page, simplified form (name + add)
+    gototab(page, "window")
+    check("manager merged into window page",
+          page.locator('#settings-tabs .tab[data-tab="clocks"]').count() == 0
+          and page.locator('[data-panel="window"] #cm-list').count() == 1)
     check("manager present", page.locator("#cm-list").count() == 1)
-    check("manager zone count >= 20", page.locator("#cm-zone option").count() >= 20,
-          page.locator("#cm-zone option").count())
-    check("manager allows arbitrary offset",
-          page.locator('#cm-zone option[value="__custom__"]').count() == 1)
+    check("redundant manager fields removed",
+          page.locator("#cm-zone, #cm-style, #cm-seconds, #cm-custom-row").count() == 0)
     page.locator("#cm-name").fill("东京")
-    page.locator("#cm-zone").select_option("540")
-    page.locator("#cm-style").select_option("neon")
-    page.locator("#cm-seconds").uncheck()
     page.locator("#cm-add").click()
     page.wait_for_timeout(180)
     cl = prefs(page).get("extraClocks", [])
-    check("manager persists style+seconds+offset",
-          len(cl) == 1 and cl[0]["offset"] == 540 and cl[0]["style"] == "neon"
-          and cl[0]["showSeconds"] is False, cl)
-    check("manager row rendered", page.locator("#cm-list .cm-row").count() == 1)
+    check("manager persists label", len(cl) == 1 and cl[0]["label"] == "东京", cl)
+    check("manager row rendered", page.locator("#cm-list .cm-row:not(.cm-row-main)").count() == 1)
+    check("main window card present", page.locator('#cm-list .cm-row[data-cm-id="main"]').count() == 1)
     # hide/show
-    page.locator("#cm-list .cm-row button[data-cm-action='visibility']").click()
+    page.locator("#cm-list .cm-row:not(.cm-row-main) button[data-cm-action='visibility']").click()
     page.wait_for_timeout(150)
     check("manager hide updates config", prefs(page)["extraClocks"][0]["visible"] is False)
-    page.locator("#cm-list .cm-row button[data-cm-action='visibility']").click()
+    page.locator("#cm-list .cm-row:not(.cm-row-main) button[data-cm-action='visibility']").click()
     page.wait_for_timeout(150)
     check("manager show updates config", prefs(page)["extraClocks"][0]["visible"] is True)
     # edit
-    page.locator("#cm-list .cm-row button[data-cm-action='edit']").click()
+    page.locator("#cm-list .cm-row:not(.cm-row-main) button[data-cm-action='edit']").click()
     page.wait_for_timeout(120)
     check("edit exposes save/cancel",
           page.locator("#cm-save").is_visible() and page.locator("#cm-cancel").is_visible())
@@ -276,17 +270,14 @@ with sync_playwright() as pw:
     page.locator("#cm-save").click()
     page.wait_for_timeout(150)
     check("edit saves new label", prefs(page)["extraClocks"][0]["label"] == "大阪")
-    # arbitrary custom offset
+    # add a second window, verify label
     page.locator("#cm-name").fill("加德满都")
-    page.locator("#cm-zone").select_option("__custom__")
-    page.wait_for_timeout(100)
-    page.locator("#cm-offset").fill("+05:45")
     page.locator("#cm-add").click()
     page.wait_for_timeout(180)
     cl = prefs(page).get("extraClocks", [])
-    check("arbitrary +05:45 offset -> 345 min", any(c["offset"] == 345 for c in cl), cl)
-    # delete via danger button
-    page.locator("#cm-list .cm-row button[data-cm-action='delete']").first.click()
+    check("second window added", any(c["label"] == "加德满都" for c in cl), cl)
+    # delete via danger button (main card has no delete button)
+    page.locator("#cm-list .cm-row:not(.cm-row-main) button[data-cm-action='delete']").first.click()
     page.wait_for_timeout(150)
     check("manager delete removes one", len(prefs(page).get("extraClocks", [])) == 1)
 
@@ -325,19 +316,18 @@ with sync_playwright() as pw:
           page.locator('[data-dyn]').count() >= 5,
           page.locator('[data-dyn]').count())
 
-    # b) 管理器独立页 + 「删除」按钮文案
-    gototab(page, "clocks")
-    check("manager is a dedicated tab",
-          page.locator('#settings-tabs .tab[data-tab="clocks"]').count() == 1
-          and page.locator('[data-panel="clocks"] #cm-list').count() == 1)
+    # b) 管理器已并入窗口页 + 「删除」按钮文案
+    gototab(page, "window")
+    check("no separate clocks tab",
+          page.locator('#settings-tabs .tab[data-tab="clocks"]').count() == 0
+          and page.locator('[data-panel="window"] #cm-list').count() == 1)
     check("timezone tab no longer contains manager",
           page.locator('[data-panel="timezone"] #cm-list').count() == 0)
     # 造一条，检查危险按钮写「删除」而非「关闭」
     page.locator("#cm-name").fill("校验")
-    page.locator("#cm-zone").select_option("0")
     page.locator("#cm-add").click()
     page.wait_for_timeout(200)
-    del_txt = page.locator("#cm-list .cm-row button[data-cm-action='delete']").first.inner_text()
+    del_txt = page.locator("#cm-list .cm-row:not(.cm-row-main) button[data-cm-action='delete']").first.inner_text()
     check("manager destructive button says 删除", "删除" in del_txt and "关闭" not in del_txt, del_txt)
 
     # c) 固定尺寸：窗口不可缩放由 Rust 保证；这里验证内部滚动容器 + 隐藏滚动条

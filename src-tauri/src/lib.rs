@@ -339,11 +339,6 @@ fn set_prefs(
         current = serde_json::from_value(merged).unwrap_or(base);
     }
 
-    // Window effects belong to the CLOCK window, never to the settings window.
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_always_on_top(current.always_on_top);
-    }
-
     write_prefs(&app, &current)?;
     {
         let mut guard = state.0.lock().map_err(|e| e.to_string())?;
@@ -495,7 +490,20 @@ fn show_main_now(app: &AppHandle) -> Result<(), String> {
 /// Create the settings window on demand. The async command and the tray menu
 /// handler both call this; the tray path runs it on a separate thread because
 /// WebviewWindowBuilder::build() deadlocks in synchronous handlers on Windows.
-fn ensure_settings_window(app: &AppHandle) -> Result<(), String> {
+fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), String> {
+    if let Some(t) = target {
+        let legacy = app
+            .try_state::<PrefsState>()
+            .and_then(|s| s.0.lock().ok().map(|g| g.clone()))
+            .unwrap_or_default();
+        let mut all = read_clocks(app, &legacy);
+        if let Some(o) = all.as_object_mut() {
+            o.insert("activeId".into(), serde_json::json!(t));
+        }
+        let _ = write_clocks(app, &all);
+        // 已存在的设置窗口不会重新 boot，用定向事件让它切目标。
+        let _ = app.emit("settings-target-changed", serde_json::json!({ "id": t }));
+    }
     if let Some(win) = app.get_webview_window("settings") {
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
@@ -524,8 +532,8 @@ fn ensure_settings_window(app: &AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn open_settings(app: AppHandle) -> Result<(), String> {
-    ensure_settings_window(&app)
+async fn open_settings(app: AppHandle, id: Option<String>) -> Result<(), String> {
+    ensure_settings_window(&app, id.as_deref())
 }
 
 #[tauri::command]
@@ -560,9 +568,9 @@ fn spawn_extra_window(
     app: &AppHandle,
     id: &str,
     label: &str,
-    offset: f64,
-    style: Option<&str>,
-    show_seconds: bool,
+    _offset: f64,
+    _style: Option<&str>,
+    _show_seconds: bool,
     visible: bool,
 ) -> Result<(), String> {
     let win_label = format!("clock-{}", id);
@@ -572,13 +580,6 @@ fn spawn_extra_window(
     // JSON-encode every injected value so quotes/unicode can never break the
     // script. Rust resolves the values; the frontend only supplies ids.
     let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".into());
-    let offset_json = serde_json::to_string(&offset).unwrap_or_else(|_| "0".into());
-    let style_json = serde_json::to_string(&style.unwrap_or("")).unwrap_or_else(|_| "\"\"".into());
-    let init = format!(
-        "window.__DC_EXTRA__=1;window.__DC_CLOCK_ID__={};window.__DC_TZ_OFFSET__={};window.__DC_TZ_LABEL__={};window.__DC_STYLE__={};window.__DC_SHOW_SECONDS__={};",
-        serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into()),
-        offset_json, label_json, style_json, show_seconds
-    );
     let count = app
         .webview_windows()
         .keys()
@@ -590,9 +591,39 @@ fn spawn_extra_window(
     // v0.6：置顶取自本窗口自己的配置（所有窗口平等）。
     let legacy = read_prefs(app);
     let mut all = read_clocks(app, &legacy);
-    let cfg = ensure_clock_cfg(&mut all, id);
+    let mut cfg = ensure_clock_cfg(&mut all, id);
     let on_top = cfg.get("alwaysOnTop").and_then(|v| v.as_bool()).unwrap_or(false);
+    let (px, py) = match (
+        cfg.get("x").and_then(|v| v.as_f64()),
+        cfg.get("y").and_then(|v| v.as_f64()),
+    ) {
+        (Some(a), Some(b)) => (a, b),
+        _ => (x, y),
+    };
+    if let Some(o) = cfg.as_object_mut() {
+        o.insert("x".into(), serde_json::json!(px));
+        o.insert("y".into(), serde_json::json!(py));
+    }
+    if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
+        clocks.insert(id.to_string(), cfg.clone());
+    }
     let _ = write_clocks(app, &all);
+    // v0.6.1：注入值取自该窗口自己的 clocks.json 配置（权威），
+    // 不再用 legacy extra_clocks 的旧 offset/style/showSeconds —— 否则用户
+    // 事后在设置里改过的时区（尤其改回「本机时间」时 tzOffset=null），
+    // 重启后会被旧注入值拉回去。
+    let tz_offset_json = serde_json::to_string(
+        &cfg.get("tzOffset").cloned().unwrap_or(serde_json::Value::Null),
+    )
+    .unwrap_or_else(|_| "null".into());
+    let inj_style = cfg.get("style").and_then(|v| v.as_str()).unwrap_or("");
+    let style_json = serde_json::to_string(inj_style).unwrap_or_else(|_| "\"\"".into());
+    let inj_secs = cfg.get("showSeconds").and_then(|v| v.as_bool()).unwrap_or(true);
+    let init = format!(
+        "window.__DC_EXTRA__=1;window.__DC_CLOCK_ID__={};window.__DC_TZ_OFFSET__={};window.__DC_TZ_LABEL__={};window.__DC_STYLE__={};window.__DC_SHOW_SECONDS__={};",
+        serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into()),
+        tz_offset_json, label_json, style_json, inj_secs
+    );
     let win = tauri::WebviewWindowBuilder::new(
         app,
         &win_label,
@@ -607,16 +638,15 @@ fn spawn_extra_window(
     .shadow(false)
     .skip_taskbar(true)
     .always_on_top(on_top)
-    .position(x, y)
+    .position(px, py)
     .visible(visible)
     .initialization_script(init.as_str())
     .build()
     .map_err(|e| e.to_string())?;
-    // 🔴 v0.5.1 关键修复：透明无边框窗口的「透明区域」默认仍接收鼠标事件，
-    // 又置顶 → 会盖住并拦截其它应用窗口的按钮点击。额外时钟窗口没有任何
-    // 交互元素（齿轮/缩放柄/设置都隐藏），直接让鼠标穿透即可，
-    // 这样既显示时钟，又完全不影响其它程序。
-    let _ = win.set_ignore_cursor_events(true);
+    // v0.6.1：额外时钟窗口与主窗口完全平等，按自己的 clickThrough 配置决定是否穿透。
+    // 默认 false ⇒ 可以拖动、可以点齿轮；想不挡其它应用可在「窗口」页开鼠标穿透。
+    let ct = cfg.get("clickThrough").and_then(|v| v.as_bool()).unwrap_or(false);
+    let _ = win.set_ignore_cursor_events(ct);
     Ok(())
 }
 
@@ -645,14 +675,15 @@ fn add_clock_window(
     if let Some(win) = app.get_webview_window(&win_label) {
         win.destroy().map_err(|e| e.to_string())?;
     }
-    let st = style.filter(|s| !s.is_empty());
-    let off = offset.clamp(-840.0, 840.0);
-    let secs = show_seconds.unwrap_or(true);
+    // v0.6.1：创建表单已精简为「名称 + 添加窗口」，不再接受时区/样式/秒覆盖。
+    // 保留这三个 Tauri 命令参数只为兼容旧前端调用；哑元消费掉避免 unused 警告。
+    let _ = (offset, style, show_seconds);
     let vis = visible.unwrap_or(true);
     let lbl = label.clone();
 
-    // v0.6：新窗口继承 main 当前完整配置（样式/颜色/字体/大小…），
-    // 再覆盖时区/名称/秒显示，避免新窗口“什么都没配”。
+    // v0.6.1：新建窗口 = 完整复制 main 当前配置（样式/颜色/字体/大小/时区…），
+    // 不再在创建时覆盖任何显示项。名称由 extra_clocks[].label 单独维护，
+    // 时区/样式等事后通过「正在编辑」下拉框进该窗口自己的设置页修改。
     {
         let legacy = state.0.lock().map(|g| g.clone()).unwrap_or_default();
         let mut all = read_clocks(&app, &legacy);
@@ -663,12 +694,7 @@ fn add_clock_window(
             .unwrap_or_else(default_window_prefs);
         let mut cfg = base;
         if let Some(o) = cfg.as_object_mut() {
-            o.insert("tzOffset".into(), serde_json::json!(off));
-            o.insert("tzLabel".into(), serde_json::json!(label));
-            if let Some(s) = st.as_ref() {
-                o.insert("style".into(), serde_json::json!(s));
-            }
-            o.insert("showSeconds".into(), serde_json::json!(secs));
+            // 仅清空位置，让新窗口错开显示、不叠在主窗口上。
             o.insert("x".into(), serde_json::Value::Null);
             o.insert("y".into(), serde_json::Value::Null);
         }
@@ -679,15 +705,9 @@ fn add_clock_window(
     }
 
     std::thread::spawn(move || {
-        let _ = spawn_extra_window(
-            &app,
-            &clean,
-            &lbl,
-            off,
-            st.as_deref(),
-            secs,
-            vis,
-        );
+        // 注入值由 spawn_extra_window 从 clocks.json 读取（权威），
+        // 这里三个显示项参数只传哑值占位，不再参与配置。
+        let _ = spawn_extra_window(&app, &clean, &lbl, 0.0, None, true, vis);
     });
     Ok(())
 }
@@ -942,25 +962,12 @@ fn set_window_prefs(
         if let Some(v) = cfg.get("alwaysOnTop").and_then(|x| x.as_bool()) {
             let _ = win.set_always_on_top(v);
         }
-        // v0.5.1 铁律：额外时钟窗口恒鼠标穿透，避免透明置顶大矩形
-        // 拦住其它应用点击；只有主窗口允许按配置切换穿透。
-        if win_label == "main" {
-            if let Some(v) = cfg.get("clickThrough").and_then(|x| x.as_bool()) {
-                let _ = win.set_ignore_cursor_events(v);
-            }
-        } else {
-            let _ = win.set_ignore_cursor_events(true);
+        // v0.6.1：所有窗口平等，鼠标穿透由每个窗口自己的配置决定。
+        if let Some(v) = cfg.get("clickThrough").and_then(|x| x.as_bool()) {
+            let _ = win.set_ignore_cursor_events(v);
         }
         if let Some(sc) = cfg.get("scale").and_then(|x| x.as_f64()) {
             let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(640.0 * sc, 220.0 * sc)));
-        }
-        if let (Some(x), Some(y)) = (
-            cfg.get("x").and_then(|v| v.as_f64()),
-            cfg.get("y").and_then(|v| v.as_f64()),
-        ) {
-            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-                x as i32, y as i32,
-            )));
         }
     }
 
@@ -999,7 +1006,12 @@ fn set_window_geometry(
 
 /// 九宫格定位作用于指定窗口（不再固定 main）。
 #[tauri::command]
-fn preset_position_for(app: AppHandle, id: String, pos: String) -> Result<(f64, f64), String> {
+fn preset_position_for(
+    app: AppHandle,
+    state: State<'_, PrefsState>,
+    id: String,
+    pos: String,
+) -> Result<(f64, f64), String> {
     let win_label = if id == "main" { "main".to_string() } else { format!("clock-{}", id) };
     let win = app
         .get_webview_window(&win_label)
@@ -1033,6 +1045,21 @@ fn preset_position_for(app: AppHandle, id: String, pos: String) -> Result<(f64, 
     };
     win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)))
         .map_err(|e| e.to_string())?;
+    let legacy = state.0.lock().map(|g| g.clone()).unwrap_or_default();
+    let mut all = read_clocks(&app, &legacy);
+    let mut cfg = ensure_clock_cfg(&mut all, &id);
+    if let Some(o) = cfg.as_object_mut() {
+        o.insert("x".into(), serde_json::json!(x as f64));
+        o.insert("y".into(), serde_json::json!(y as f64));
+    }
+    if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
+        clocks.insert(id.clone(), cfg.clone());
+    }
+    let _ = write_clocks(&app, &all);
+    let _ = app.emit(
+        "window-prefs-changed",
+        serde_json::json!({ "id": id, "prefs": cfg }),
+    );
     Ok((x as f64, y as f64))
 }
 
@@ -1300,19 +1327,23 @@ fn get_shutdown_status(state: State<'_, TimerState>) -> Result<Option<String>, S
         .map(|t| t.label.clone()))
 }
 
-/// Restore a remembered position. Saved coords are PHYSICAL pixels; convert to
-/// logical with the window's current scale factor. If the position would land
-/// off-screen (monitor unplugged), fall back to the centered default.
-fn restore_position(win: &WebviewWindow, prefs: &Prefs) {
-    let (Some(x), Some(y)) = (prefs.x, prefs.y) else {
-        return;
+/// Restore a remembered position for ANY clock window.
+/// v0.6.1: x/y live in clocks.json (per-window), legacy prefs.json is only a
+/// migration fallback. Coordinates are PHYSICAL pixels.
+fn restore_window_position(win: &WebviewWindow, app: &AppHandle, id: &str, legacy: &Prefs) {
+    let mut all = read_clocks(app, legacy);
+    let cfg = ensure_clock_cfg(&mut all, id);
+    let _ = write_clocks(app, &all);
+    let (x, y) = match (
+        cfg.get("x").and_then(|v| v.as_f64()),
+        cfg.get("y").and_then(|v| v.as_f64()),
+    ) {
+        (Some(a), Some(b)) => (a, b),
+        _ => match (legacy.x, legacy.y) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return,
+        },
     };
-    let Ok(scale) = win.scale_factor() else {
-        return;
-    };
-    let lx = x / scale;
-    let ly = y / scale;
-
     let mut on_screen = false;
     if let Ok(monitors) = win.available_monitors() {
         for m in monitors {
@@ -1329,7 +1360,9 @@ fn restore_position(win: &WebviewWindow, prefs: &Prefs) {
         }
     }
     if on_screen {
-        let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(lx, ly)));
+        let _ = win.set_position(tauri::Position::Physical(
+            tauri::PhysicalPosition::new(x as i32, y as i32),
+        ));
     }
 }
 
@@ -1384,15 +1417,29 @@ pub fn run() {
             app.manage(PrefsState(Mutex::new(prefs.clone())));
             app.manage(TimerState(Mutex::new(None)));
 
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                    640.0 * prefs.scale,
-                    220.0 * prefs.scale,
-                )));
-                restore_position(&win, &prefs);
-                let _ = win.set_always_on_top(prefs.always_on_top);
-                if prefs.click_through {
-                    let _ = win.set_ignore_cursor_events(true);
+            {
+                let mut all = read_clocks(handle, &prefs);
+                let main_cfg = ensure_clock_cfg(&mut all, "main");
+                let _ = write_clocks(handle, &all);
+                let on_top = main_cfg
+                    .get("alwaysOnTop").and_then(|v| v.as_bool())
+                    .unwrap_or(prefs.always_on_top);
+                let click_through = main_cfg
+                    .get("clickThrough").and_then(|v| v.as_bool())
+                    .unwrap_or(prefs.click_through);
+                let scale = main_cfg
+                    .get("scale").and_then(|v| v.as_f64())
+                    .unwrap_or(prefs.scale);
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                        640.0 * scale,
+                        220.0 * scale,
+                    )));
+                    let _ = win.set_always_on_top(on_top);
+                    if click_through {
+                        let _ = win.set_ignore_cursor_events(true);
+                    }
+                    restore_window_position(&win, handle, "main", &prefs);
                 }
             }
 
@@ -1427,13 +1474,28 @@ pub fn run() {
                 "settings" => {
                     let h = app.clone();
                     std::thread::spawn(move || {
-                        let _ = ensure_settings_window(&h);
+                        let _ = ensure_settings_window(&h, None);
                     });
                 }
                 "unclick" => {
-                    if let Some(win) = app.get_webview_window("main") {
-                        let _ = win.set_ignore_cursor_events(false);
+                    for (label, win) in app.webview_windows() {
+                        if label == "main" || label.starts_with("clock-") {
+                            let _ = win.set_ignore_cursor_events(false);
+                        }
                     }
+                    let legacy = app
+                        .try_state::<PrefsState>()
+                        .and_then(|s| s.0.lock().ok().map(|g| g.clone()))
+                        .unwrap_or_default();
+                    let mut all = read_clocks(app, &legacy);
+                    if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
+                        for (_id, cfg) in clocks.iter_mut() {
+                            if let Some(o) = cfg.as_object_mut() {
+                                o.insert("clickThrough".into(), serde_json::json!(false));
+                            }
+                        }
+                    }
+                    let _ = write_clocks(app, &all);
                     patch_prefs(app, "clickThrough", serde_json::json!(false));
                 }
                 "update" => {
@@ -1443,7 +1505,7 @@ pub fn run() {
                     DONATE_INTENT.store(true, Ordering::SeqCst);
                     let h = app.clone();
                     std::thread::spawn(move || {
-                        let _ = ensure_settings_window(&h);
+                        let _ = ensure_settings_window(&h, None);
                         let _ = h.emit("show-donate", ());
                     });
                 }

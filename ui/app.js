@@ -13,7 +13,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.6.0';
+  var APP_VERSION = '0.6.1';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -93,10 +93,8 @@
   } else if (isExtraWindow) {
     document.body.setAttribute('data-view', 'extra');
     document.title = 'Desk Clock · ' + (window.__DC_TZ_LABEL__ || '时区时钟');
-    // 额外窗口不显示齿轮/缩放柄/设置面板（设置是全局唯一窗口）
-    if (gear) gear.style.display = 'none';
-    var rh0 = document.getElementById('resize-handle');
-    if (rh0) rh0.style.display = 'none';
+    // v0.6.1：所有窗口平等——额外窗口也保留齿轮与缩放柄，
+    // 点齿轮会打开设置并自动把编辑目标切到自己。
   }
 
   function byId(id) { return document.getElementById(id); }
@@ -363,63 +361,24 @@
   function cmResetEditor() {
     editingClockId = null;
     var name = byId('cm-name'); if (name) name.value = '';
-    var zone = byId('cm-zone'); if (zone) zone.value = '480';
-    var off = byId('cm-offset'); if (off) off.value = '';
-    var style = byId('cm-style'); if (style) style.value = '';
-    var secs = byId('cm-seconds'); if (secs) secs.checked = true;
     var add = byId('cm-add'); if (add) add.hidden = false;
     var save = byId('cm-save'); if (save) save.hidden = true;
     var cancel = byId('cm-cancel'); if (cancel) cancel.hidden = true;
     var hint = byId('cm-edit-hint'); if (hint) hint.hidden = true;
-    cmToggleCustomRow();
-  }
-
-  function cmToggleCustomRow() {
-    var zone = byId('cm-zone');
-    var row = byId('cm-custom-row');
-    var hint = byId('cm-offset-hint');
-    var isCustom = zone && zone.value === '__custom__';
-    if (row) row.hidden = !isCustom;
-    if (hint) hint.hidden = !isCustom;
   }
 
   function cmReadEditor() {
-    var L = STRINGS_LANG();
-    var nameEl = byId('cm-name'), zoneEl = byId('cm-zone');
-    var label = (nameEl.value || '').trim();
-    var offset;
-    if (zoneEl.value === '__custom__') {
-      offset = parseZoneInput(byId('cm-offset').value);
-      if (offset === null) { byId('cm-offset').focus(); return null; }
-    } else {
-      offset = Number(zoneEl.value) || 0;
-    }
-    if (!label) label = zoneLabelFor(offset);
-    return {
-      label: label.slice(0, 16),
-      offset: offset,
-      style: byId('cm-style').value,
-      showSeconds: byId('cm-seconds').checked,
-      visible: true
-    };
+    var nameEl = byId('cm-name');
+    return { label: ((nameEl && nameEl.value) || '').trim().slice(0, 16) };
   }
 
   function cmFillEditor(c) {
-    byId('cm-name').value = c.label;
-    var zone = byId('cm-zone');
-    var match = String(c.offset);
-    var has = false;
-    for (var i = 0; i < zone.options.length; i++) if (zone.options[i].value === match) { has = true; break; }
-    if (has) { zone.value = match; byId('cm-offset').value = ''; }
-    else { zone.value = '__custom__'; byId('cm-offset').value = cmOffsetText(c.offset).replace('UTC', ''); }
-    byId('cm-style').value = c.style || '';
-    byId('cm-seconds').checked = c.showSeconds !== false;
+    var name = byId('cm-name'); if (name) { name.value = c.label; name.focus(); }
     editingClockId = c.id;
     byId('cm-add').hidden = true;
     byId('cm-save').hidden = false;
     byId('cm-cancel').hidden = false;
-    byId('cm-edit-hint').hidden = false;
-    cmToggleCustomRow();
+    var hint = byId('cm-edit-hint'); if (hint) hint.hidden = false;
   }
 
   // 轮询核对真实窗口（WebView2 冷启动可能慢于单次固定延时）。
@@ -453,9 +412,6 @@
         var d = Prefs.DEFAULTS, wk;
         for (wk in d) if (Object.prototype.hasOwnProperty.call(d, wk)) base[wk] = d[wk];
         for (wk in all.clocks.main) if (Object.prototype.hasOwnProperty.call(all.clocks.main, wk)) base[wk] = all.clocks.main[wk];
-        base.tzOffset = c.offset; base.tzLabel = c.label;
-        if (c.style) base.style = c.style;
-        if (typeof c.showSeconds === 'boolean') base.showSeconds = c.showSeconds;
         all.clocks[c.id] = base;
         localStorage.setItem('deskclock.clocks', JSON.stringify(all));
       } catch (e) {}
@@ -473,28 +429,35 @@
     if (!box) return;
     var L = STRINGS_LANG();
     box.textContent = '';
-    var list = state.extraClocks || [];
-    if (!list.length) {
-      var empty = document.createElement('div');
-      empty.className = 'alarm-empty';
-      empty.textContent = I18n.t(L, 'cmEmpty');
-      box.appendChild(empty);
-      return;
-    }
-    list.forEach(function (c) {
+    // v0.6.1：主窗口也作为一张卡片列出（用户要求「将我们的主窗口」纳入管理）。
+    var rows = [{ id: 'main', label: I18n.t(L, 'cmMain'), isMain: true, visible: true }];
+    (state.extraClocks || []).forEach(function (c) {
+      rows.push({
+        id: c.id, label: c.label || cmOffsetText(c.offset),
+        offset: c.offset, style: c.style, visible: c.visible, isMain: false
+      });
+    });
+    rows.forEach(function (c) {
       var row = document.createElement('div');
-      row.className = 'cm-row';
+      row.className = 'cm-row' + (c.isMain ? ' cm-row-main' : '');
+      row.setAttribute('data-cm-id', c.id);
 
       var info = document.createElement('div');
       info.className = 'cm-row-info';
       var title = document.createElement('div');
       title.className = 'cm-row-title';
       title.textContent = c.label;
+      if (c.isMain) {
+        var tag = document.createElement('span');
+        tag.className = 'cm-row-tag';
+        tag.textContent = I18n.t(L, 'cmMainTag');
+        title.appendChild(tag);
+      }
       var meta = document.createElement('div');
       meta.className = 'cm-row-meta';
-      meta.textContent = cmOffsetText(c.offset) + ' · ' +
-        (c.style ? ((I18n.t(L, 'styles') || {})[c.style] || c.style) : I18n.t(L, 'cmStyleGlobal')) +
-        ' · ' + (c.visible === false ? I18n.t(L, 'cmStopped') : I18n.t(L, 'cmRunning'));
+      meta.textContent = c.isMain
+        ? I18n.t(L, 'cmMainHint')
+        : (c.visible === false ? I18n.t(L, 'cmStopped') : I18n.t(L, 'cmRunning'));
       info.appendChild(title); info.appendChild(meta);
 
       var actions = document.createElement('div');
@@ -507,32 +470,31 @@
         b.addEventListener('click', fn);
         return b;
       }
-      // v0.6：直达该窗口的完整设置（切换编辑目标 + 跳到外观页）
       actions.appendChild(mk('cmSettings', 'ghost', function () {
         Prefs.setActiveClock(c.id).then(function (fresh) {
           state = fresh;
           applyRoot(); syncControls(); syncAnalogPenetrateControls();
-          refreshTargetOptions();
           var t = document.querySelector('#settings-tabs .tab[data-tab="appearance"]');
           if (t) t.click();
         }).catch(function () {});
       }, 'settings'));
-      actions.appendChild(mk('cmEdit', 'ghost', function () { cmFillEditor(c); }, 'edit'));
-      actions.appendChild(mk(c.visible === false ? 'cmShow' : 'cmHide', 'ghost', function () {
-        var vis = !(c.visible !== false);
-        var next = (state.extraClocks || []).map(function (x) {
-          return x.id === c.id ? Object.assign({}, x, { visible: vis }) : x;
-        });
-        changed({ extraClocks: next });
-        if (Prefs.isNative) Prefs.setClockWindowVisible(c.id, vis).catch(function () {});
-      }, 'visibility'));
-      actions.appendChild(mk('cmDelete', 'danger', function () {
-        var next = (state.extraClocks || []).filter(function (x) { return x.id !== c.id; });
-        changed({ extraClocks: next });
-        if (Prefs.isNative) Prefs.closeClockWindow(c.id).catch(function () {});
-        if (editingClockId === c.id) cmResetEditor();
-      }, 'delete'));
-
+      if (!c.isMain) {
+        actions.appendChild(mk('cmEdit', 'ghost', function () { cmFillEditor(c); }, 'edit'));
+        actions.appendChild(mk(c.visible === false ? 'cmShow' : 'cmHide', 'ghost', function () {
+          var vis = !(c.visible !== false);
+          var next = (state.extraClocks || []).map(function (x) {
+            return x.id === c.id ? Object.assign({}, x, { visible: vis }) : x;
+          });
+          changed({ extraClocks: next });
+          if (Prefs.isNative) Prefs.setClockWindowVisible(c.id, vis).catch(function () {});
+        }, 'visibility'));
+        actions.appendChild(mk('cmDelete', 'danger', function () {
+          var next = (state.extraClocks || []).filter(function (x) { return x.id !== c.id; });
+          changed({ extraClocks: next });
+          if (Prefs.isNative) Prefs.closeClockWindow(c.id).catch(function () {});
+          if (editingClockId === c.id) cmResetEditor();
+        }, 'delete'));
+      }
       row.appendChild(info); row.appendChild(actions);
       box.appendChild(row);
     });
@@ -598,39 +560,25 @@
   }
 
   function bindClockManager() {
-    var zone = byId('cm-zone');
-    if (zone) {
-      ZONES.forEach(function (z) {
-        var o = document.createElement('option');
-        o.value = String(z.offset); o.textContent = z.label;
-        zone.appendChild(o);
-      });
-      var custom = document.createElement('option');
-      custom.value = '__custom__';
-      custom.textContent = I18n.t(STRINGS_LANG(), 'cmCustomZone');
-      zone.appendChild(custom);
-      zone.value = '480';
-    }
-    var styleSel = byId('cm-style');
-    if (styleSel) {
-      STYLES.forEach(function (s) {
-        var o = document.createElement('option');
-        o.value = s;
-        o.textContent = (I18n.t(STRINGS_LANG(), 'styles') || {})[s] || s;
-        styleSel.appendChild(o);
-      });
-    }
-    if (zone) zone.addEventListener('change', cmToggleCustomRow);
-    cmToggleCustomRow();
-
+    var nameEl = byId('cm-name');
+    if (nameEl) nameEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var btn = editingClockId ? byId('cm-save') : byId('cm-add');
+        if (btn) btn.click();
+      }
+    });
     byId('cm-add').addEventListener('click', function () {
       var addBtn = this;
-      if (addBtn.disabled) return;          // v0.5.1：建窗期间防连点
-      var c = cmReadEditor();
-      if (!c) return;
-      c.id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      if (addBtn.disabled) return;
       var list = (state.extraClocks || []).slice();
       if (list.length >= 8) return;
+      var label = cmReadEditor().label ||
+        (I18n.t(STRINGS_LANG(), 'cmWindow') + ' ' + (list.length + 2));
+      var c = {
+        id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        label: label, offset: 0, style: '', showSeconds: true, visible: true
+      };
       list.push(c);
       changed({ extraClocks: list });
       addBtn.disabled = true;
@@ -639,15 +587,16 @@
       setTimeout(function () { addBtn.disabled = false; }, 900);
     });
     byId('cm-save').addEventListener('click', function () {
-      if (!editingClockId) return;
-      var c = cmReadEditor();
-      if (!c) return;
+      if (!editingClockId || editingClockId === 'main') { cmResetEditor(); return; }
+      var label = cmReadEditor().label;
+      if (!label) { var n = byId('cm-name'); if (n) n.focus(); return; }
+      var id = editingClockId;
       var list = (state.extraClocks || []).map(function (x) {
-        return x.id === editingClockId ? Object.assign({}, x, c) : x;
+        return x.id === id ? Object.assign({}, x, { label: label }) : x;
       });
       changed({ extraClocks: list });
-      // 重建窗口（销毁旧的→按新样式/秒/时区重新创建）
-      cmSpawn(Object.assign({ id: editingClockId }, c));
+      // 同步窗口自身配置里的名称（顶部「正在编辑」下拉框与窗口标题会用到）
+      if (Prefs.isNative) Prefs.setWindowPrefs(id, { tzLabel: label }).catch(function () {});
       cmResetEditor();
     });
     byId('cm-cancel').addEventListener('click', cmResetEditor);
@@ -1078,7 +1027,6 @@
     if (patch.scale !== undefined) setWindowSize(state.scale);
     if (patch.lang !== undefined) { syncControls(); renderPrivilege(); }
     if (patch.style !== undefined && byId('analog-theme-row')) byId('analog-theme-row').hidden = state.style !== 'analog';
-    if (patch.clickThrough !== undefined && Prefs.isNative) Prefs.setClickThrough(!!patch.clickThrough).catch(function () {});
     if (opts && opts.rebuild && engine) {
       var now = displayNow();
       var parts = engine.buildParts(now);
@@ -1099,12 +1047,14 @@
     fresh.lang = state.lang;
     fresh.x = state.x; fresh.y = state.y;
     fresh.runAsAdmin = !!state.runAsAdmin;
+    // v0.6.1：还原设置只重置「设置项」，不删除已创建的窗口——
+    // 否则运行中的窗口还在、清单却被清空，重启后窗口凭空消失。
+    fresh.extraClocks = state.extraClocks || [];
     state = fresh;
     Prefs.save(fresh);
     applyRoot();
     setWindowSize(state.scale);
     if (engine) engine.setOptions({ showSeconds: state.showSeconds, hour12: state.hour12, animate: state.style === 'flip' });
-    if (Prefs.isNative) Prefs.setClickThrough(false).catch(function () {});
     if (!isSettingsWindow && engine) {
       var now = displayNow();
       var parts = engine.buildParts(now);
@@ -1169,9 +1119,10 @@
 
   function bindControls() {
     gear.addEventListener('click', function () {
-      if (isExtraWindow) return;
+      if (isExtraWindow && !Prefs.isNative) return;
       if (Prefs.isNative && !isSettingsWindow) {
-        Prefs.openSettings().catch(function () { settings.hidden = !settings.hidden; });
+        // v0.6.1：从哪个窗口点齿轮，设置窗口就默认编辑哪个窗口。
+        Prefs.openSettings(Prefs.getSelfId()).catch(function () { settings.hidden = !settings.hidden; });
         return;
       }
       if (isSettingsWindow) return;
@@ -1320,13 +1271,14 @@
   }
 
   // Persist the window position from Rust's physical-space move events.
+  // v0.6.1：必须用「本窗口作用域」监听。全局 event.listen 注册的是 Any target，
+  // Tauri 的 Any 目标会绕过 emit_to_window 的窗口过滤，导致每个窗口都收到其它
+  // 窗口的 tauri://move 并把别人的坐标写进自己的配置，进而被重新定位。
   function listenMoved() {
     if (!Prefs.isNative) return;
     try {
-      var event = window.__TAURI__ && window.__TAURI__.event;
-      if (!event || typeof event.listen !== 'function') return;
       var timer = null;
-      event.listen('tauri://move', function (e) {
+      function onMove(e) {
         var pos = e && e.payload;
         if (!pos || !isFinite(pos.x) || !isFinite(pos.y)) return;
         if (timer !== null) clearTimeout(timer);
@@ -1334,7 +1286,14 @@
           timer = null;
           Prefs.save({ x: Math.round(pos.x), y: Math.round(pos.y) });
         }, 400);
-      });
+      }
+      var wv = window.__TAURI__ && window.__TAURI__.webviewWindow;
+      if (wv && typeof wv.getCurrentWebviewWindow === 'function') {
+        wv.getCurrentWebviewWindow().onMoved(onMove);
+        return;
+      }
+      var ev = window.__TAURI__ && window.__TAURI__.event;
+      if (ev && typeof ev.listen === 'function') ev.listen('tauri://move', onMove);
     } catch (e) { /* ignore */ }
   }
 
@@ -1400,6 +1359,15 @@
     }
 
     Prefs.onChanged(applyRemotePrefs);
+    // v0.6.1：从某个时钟窗口点齿轮时，已存在的设置窗口要切到该窗口。
+    Prefs.listen('settings-target-changed', function (p) {
+      if (!isSettingsWindow || !p || !p.id) return;
+      Prefs.setActiveClock(p.id).then(function (fresh) {
+        state = fresh;
+        applyRoot(); syncControls(); syncAnalogPenetrateControls();
+        refreshTargetOptions();
+      }).catch(function () {});
+    });
     // v0.6：某窗口配置变化时，只应用到自己 / 当前编辑目标
     Prefs.onWindowChanged(function (fresh) {
       var rebuild = fresh.style !== state.style || fresh.showSeconds !== state.showSeconds;
@@ -1440,7 +1408,6 @@
         else timerTarget = null;
         updateTimerUI();
       }).catch(function () { /* ignore */ });
-      if (state.clickThrough) Prefs.setClickThrough(true).catch(function () {});
       // 启动时自动校时（仅主时钟窗口，避免多窗口重复触发）
       if (state.autoTimeSync && !isSettingsWindow && !isExtraWindow) Prefs.syncSystemTime().catch(function () {});
     }

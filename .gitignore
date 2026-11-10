@@ -15,6 +15,9 @@ Thumbs.db
 prefs.json
 *.tmp
 
+# Internal agent task specs (never publish)
+tmp/
+
 # Python cache
 __pycache__/
 *.py[cod]

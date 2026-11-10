@@ -4,6 +4,8 @@
   "description": "Permissions for the main clock, the independent settings window and any extra timezone clock windows. Window mutations, tray, autostart, links and preference writes are all Rust commands (no plugin JS permissions needed).",
   "windows": ["main", "settings", "clock-*"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
   ]
 }

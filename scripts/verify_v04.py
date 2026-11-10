@@ -94,9 +94,9 @@ with sync_playwright() as pw:
     page.wait_for_timeout(150)
 
     # ---- tab structure ----
-    check("8 settings tabs present", page.locator("#settings-tabs .tab").count() == 8,
+    check("7 settings tabs present", page.locator("#settings-tabs .tab").count() == 7,
           page.locator("#settings-tabs .tab").count())
-    check("all panels present", page.locator("#settings-panels .panel").count() == 8)
+    check("all panels present", page.locator("#settings-panels .panel").count() == 7)
 
     # ---- show separator (hide but keep spacing) ----
     sep = page.locator("#pref-separator")
@@ -199,36 +199,27 @@ with sync_playwright() as pw:
     page.locator("#pref-auto-timesync").check(); page.wait_for_timeout(150)
     check("auto time sync pref persisted", prefs(page).get("autoTimeSync") is True)
 
-    # ---- v0.5 multi-timezone window manager ----
-    check("manager zone select populated", page.locator("#cm-zone option").count() >= 10,
-          page.locator("#cm-zone option").count())
-    check("manager offers arbitrary UTC offset", page.locator("#cm-zone option[value='__custom__']").count() == 1)
-    check("manager style options", page.locator("#cm-style option").count() >= 8,
-          page.locator("#cm-style option").count())
+    # ---- v0.6.1 window manager (merged into Window page) ----
+    check("redundant manager fields removed",
+          page.locator("#cm-zone, #cm-style, #cm-seconds, #cm-custom-row").count() == 0)
     page.locator("#cm-name").fill("纽约")
-    page.locator("#cm-zone").select_option("-300")
-    page.locator("#cm-style").select_option("analog")
     page.locator("#cm-add").click(); page.wait_for_timeout(200)
     extras = prefs(page).get("extraClocks", [])
-    check("manager config persisted", len(extras) == 1 and extras[0]["offset"] == -300
-          and extras[0]["style"] == "analog", extras)
-    check("manager row rendered", page.locator("#cm-list .cm-row").count() == 1)
-    # 自定义 UTC 偏移（任意时区）
+    check("manager config persisted", len(extras) == 1 and extras[0]["label"] == "纽约", extras)
+    check("manager row rendered", page.locator("#cm-list .cm-row:not(.cm-row-main)").count() == 1)
+    # 添加第二个窗口并校验 label
     page.locator("#cm-name").fill("自定义")
-    page.locator("#cm-zone").select_option("__custom__"); page.wait_for_timeout(100)
-    check("custom offset row visible", page.locator("#cm-custom-row").is_visible())
-    page.locator("#cm-offset").fill("+05:30")
     page.locator("#cm-add").click(); page.wait_for_timeout(200)
     extras = prefs(page).get("extraClocks", [])
-    check("arbitrary offset persisted", any(c.get("offset") == 330 for c in extras), extras)
+    check("second window label persisted", any(c.get("label") == "自定义" for c in extras), extras)
     # 编辑 / 显示隐藏 / 删除
-    page.locator("#cm-list .cm-row").first.locator('button[data-cm-action="edit"]').click(); page.wait_for_timeout(120)
+    page.locator("#cm-list .cm-row:not(.cm-row-main)").first.locator('button[data-cm-action="edit"]').click(); page.wait_for_timeout(120)
     check("edit mode exposes save", page.locator("#cm-save").is_visible())
     page.locator("#cm-save").click(); page.wait_for_timeout(150)
     check("save returns to add mode", page.locator("#cm-add").is_visible())
-    # 删除全部
+    # 删除全部（主窗口卡片不可删除，按新增窗口数循环）
     for _ in range(len(prefs(page).get("extraClocks", []))):
-        page.locator("#cm-list .cm-row").first.locator("button.danger").click(); page.wait_for_timeout(120)
+        page.locator("#cm-list .cm-row:not(.cm-row-main)").first.locator("button.danger").click(); page.wait_for_timeout(120)
     check("manager rows removable", len(prefs(page).get("extraClocks", [])) == 0)
 
     # ---- donation copy + link + update ----
@@ -238,7 +229,7 @@ with sync_playwright() as pw:
           page.locator("#donate-toggle").inner_text())
     check("project link present", page.locator("#project-link").count() == 1)
     check("check-update button present", page.locator("#check-update").count() == 1)
-    check("version badge shows 0.6.0", "0.6.0" in page.locator("#ver-badge").inner_text(),
+    check("version badge shows 0.6.1", "0.6.1" in page.locator("#ver-badge").inner_text(),
           page.locator("#ver-badge").inner_text())
     qr = page.locator("#donate-img")
     page.locator("#donate-toggle").click(); page.wait_for_timeout(150)
@@ -285,8 +276,10 @@ with sync_playwright() as pw:
     ew.reload(); ew.wait_for_timeout(900)
     check("extra window shows clock engine", ew.locator("#clock .slot").count() > 0,
           ew.locator("#clock .slot").count())
-    check("extra window hides gear", ew.locator("#gear").is_hidden())
-    check("extra window hides resize grip", ew.locator("#resize-handle").is_hidden())
+    check("extra window keeps gear (all windows equal)",
+          ew.locator("#gear").evaluate("e => e.style.display !== 'none'"))
+    check("extra window keeps resize grip (all windows equal)",
+          ew.locator("#resize-handle").evaluate("e => e.style.display !== 'none'"))
     check("extra window hides settings panel", ew.locator("#settings").is_hidden())
     # The displayed hour must differ from local by the configured offset.
     diff = ew.evaluate("""() => {

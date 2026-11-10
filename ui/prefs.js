@@ -479,9 +479,9 @@
     return withTimeout(invoke('restart_elevated'), 8000, null, '授权请求超时。');
   }
 
-  function openSettings() {
+  function openSettings(id) {
     if (!isNative) return Promise.resolve();
-    return invoke('open_settings');
+    return invoke('open_settings', id ? { id: id } : {});
   }
 
   function closeSettings() {
