@@ -23,14 +23,20 @@ check("hooks.nsh defines NSIS_HOOK_PREINSTALL", "NSIS_HOOK_PREINSTALL" in h)
 check("hooks.nsh defines NSIS_HOOK_PREUNINSTALL", "NSIS_HOOK_PREUNINSTALL" in h)
 check("hooks.nsh defines NSIS_HOOK_POSTINSTALL", "NSIS_HOOK_POSTINSTALL" in h)
 check("hooks.nsh defines NSIS_HOOK_POSTUNINSTALL", "NSIS_HOOK_POSTUNINSTALL" in h)
-check("hooks.nsh calls KillProcessCurrentUser", "KillProcessCurrentUser" in h)
+check("hooks.nsh calls unrestricted KillProcess", "nsis_tauri_utils::KillProcess " in h)
 check("hooks.nsh calls RunAsUser", "RunAsUser" in h)
-check("hooks.nsh calls FindProcessCurrentUser", "FindProcessCurrentUser" in h)
+check("hooks.nsh calls unrestricted FindProcess", "nsis_tauri_utils::FindProcess " in h)
 check("hooks.nsh uses --dc-exit-for-install", "--dc-exit-for-install" in h)
+# v0.7.1: SID-filtered APIs caused the "Uninstallation Aborted / Failed to kill" hang
+# when installer and clock run at different integrity levels. Must never come back.
+check("hooks.nsh no longer calls SID-filtered process APIs",
+      "nsis_tauri_utils::FindProcessCurrentUser" not in h
+      and "nsis_tauri_utils::KillProcessCurrentUser" not in h)
+check("hooks.nsh retries KillProcess up to 3 times", "$2 >= 3" in h)
 check("hooks.nsh inserts prepare macro in both PRE hooks",
       len(re.findall(r"!insertmacro\s+_DC_PREPARE_APP_EXIT", h)) == 2,
       len(re.findall(r"!insertmacro\s+_DC_PREPARE_APP_EXIT", h)))
-check("hooks.nsh checks FindProcessCurrentUser numeric return",
+check("hooks.nsh checks FindProcess numeric return",
       re.search(r"\$\{If\}\s+\$0\s*!=\s*0", h) is not None)
 check("hooks.nsh waits ~3s (200ms x 15)", "Sleep 200" in h and "15" in h)
 
