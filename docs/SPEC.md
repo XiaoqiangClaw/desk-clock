@@ -1,7 +1,7 @@
 # Desk Clock — 设计契约
 
 > 本文是模块接口、样式与配置模型的技术说明。
-> 当前版本 **v0.6.3**，功能与行为以根目录 `README.md` 和 `CHANGELOG.md` 为准。
+> 当前版本 **v0.7.0**，功能与行为以根目录 `README.md` 和 `CHANGELOG.md` 为准。
 
 开源桌面时钟：只显示时间，可选是否显示秒，8 种样式，无边框透明、低资源、跨 Windows / macOS / Linux；
 同一进程可开任意多个时钟窗口，**每个窗口都有全套独立配置**。
@@ -91,6 +91,12 @@
   （显示秒→下一个整秒；不显示秒→下一个整分），`setTimeout` 单次唤醒，并做 ±20ms 对齐补偿。
   `document.visibilitychange` 隐藏时 `stop()`、可见时 `start()`；原生 `hide()` 另有 Rust 定向事件停/复表。
 - `hour12=true` 时小时按 12 小时制（不额外显示 AM/PM，保持「仅显示时间」）。
+
+### `ui/announce.js` → `DeskClock.Announce`（v0.7，未发布）
+- 语音播报（纯 Web Speech API + 复用 `Alarm` 合成提示音，零新依赖）；顶层零副作用，`speechSynthesis` 全部 try/catch 保护，无语音引擎时优雅降级（仅播提示音）。
+- 纯函数：`shouldFire(now,cfg)`（整点/半点/每刻/间隔/指定时刻 + 免打扰跨午夜）、`inQuiet(now,cfg)`、`buildText(now,cfg)`（中英文报时，12/24 制，可含日期/星期）。
+- 副作用：`speak(text,cfg)`（voice/lang/rate/volume/pitch 装配，`cancel()` 后 `speak`）、`preview(cfg)`、`voices()`、`supported()`、`onVoicesChanged(cb)`。
+- 触发：`ui/app.js` 的 `maybeAnnounce()` 仅在**主时钟窗口**（非设置、非额外）按分钟去重触发；13 个全局字段（`announceEnabled` 默认 `false`）与 `ui/prefs.js` 的 `DEFAULTS`/`GLOBAL_KEYS` 对齐。
 
 ### `ui/app.js` → 装配
 1. `await Prefs.load()` → 应用根节点 `data-style`、`data-backdrop`、`--dc-scale`、`opacity`；

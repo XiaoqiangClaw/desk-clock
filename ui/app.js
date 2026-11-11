@@ -9,11 +9,14 @@
   var I18n = DC.I18n;
   var Fonts = DC.Fonts;
   var Alarm = DC.Alarm;
+  var Announce = DC.Announce;
+  var ALLOWED_RULES = ['hourly', 'half', 'quarter', 'interval', 'custom'];
+  var ALLOWED_CHIME = ['none', 'gentle', 'bell', 'tick', 'rise', 'chord'];
 
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.6.3';
+  var APP_VERSION = '0.7.0';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -70,7 +73,8 @@
   var analog = null;
   var builtStyle = null;
   var builtPartsKey = '';
-  var lastAlarmKey = '';
+  var lastAlarmKey = '';   // 上一次闹钟去重 key
+  var lastAnnounceKey = '';   // v0.7: 语音播报分钟去重 key
   var timerTarget = null;   // {label, action}
   var privStatus = null;
   var privError = false;    // v0.5: 权限状态读取失败（显示重试按钮）
@@ -884,7 +888,7 @@
 
   function onTick(payload) {
     renderFrame(payload);
-    if (!isSettingsWindow && !isExtraWindow) maybeFireAlarms(payload.now);
+    if (!isSettingsWindow && !isExtraWindow) { maybeFireAlarms(payload.now); maybeAnnounce(); }
   }
 
   function maybeFireAlarms(now) {
@@ -902,6 +906,89 @@
     Prefs.save({ alarms: remaining });
     renderAlarmList();
     showAlarmToast(hits.map(function (a) { return a.time; }).join('、'));
+  }
+
+  // v0.7（未发布）：语音播报。只在主时钟窗口触发（与闹钟一致），按分钟去重；
+  // 先播前导提示音（若选），再用 Web Speech API 读时间。
+  function maybeAnnounce() {
+    if (!state || !Announce || state.announceEnabled !== true) return;
+    var local = new Date();
+    if (!Announce.shouldFire(local, state)) { lastAnnounceKey = ''; return; }
+    var key = local.toDateString() + '|' + ('0' + local.getHours()).slice(-2) + ':' + ('0' + local.getMinutes()).slice(-2);
+    if (key === lastAnnounceKey) return;
+    lastAnnounceKey = key;
+    if (state.announceChime && state.announceChime !== 'none' && Alarm.playChime) Alarm.playChime(state.announceChime);
+    Announce.speak(Announce.buildText(local, state), state);
+  }
+
+  // v0.7（未发布）：填充语音下拉（保留当前选中；无语音时只留“跟随系统”）
+  function fillVoiceSelect(voice) {
+    var sel = byId('pref-announce-voice');
+    if (!sel || !Announce) return;
+    voice = voice || '';
+    var vs = Announce.voices();
+    sel.textContent = '';
+    var d = document.createElement('option');
+    d.value = ''; d.textContent = I18n.t(STRINGS_LANG(), 'announceVoiceDefault'); sel.appendChild(d);
+    for (var i = 0; i < vs.length; i++) {
+      var o = document.createElement('option');
+      o.value = vs[i].voiceURI || String(vs[i].name || i);
+      o.textContent = (vs[i].name || ('voice ' + i)) + ' (' + (vs[i].lang || '?') + ')';
+      sel.appendChild(o);
+    }
+    var idx = 0;
+    for (i = 0; i < sel.options.length; i++) if (sel.options[i].value === voice) { idx = i; break; }
+    sel.selectedIndex = idx;
+  }
+
+  // v0.7（未发布）：指定时刻列表渲染 + 删除
+  function renderAnnounceTimes() {
+    var box = byId('announce-time-list');
+    if (!box) return;
+    box.textContent = '';
+    var list = (state && state.announceTimes) || [];
+    if (!list.length) {
+      var e = document.createElement('div'); e.className = 'alarm-empty';
+      e.textContent = I18n.t(STRINGS_LANG(), 'announceTimeEmpty'); box.appendChild(e); return;
+    }
+    list.forEach(function (t) {
+      var row = document.createElement('div'); row.className = 'alarm-row';
+      var info = document.createElement('span'); info.className = 'alarm-info';
+      var tt = document.createElement('span'); tt.className = 'alarm-time-text'; tt.textContent = t.time;
+      info.appendChild(tt); row.appendChild(info);
+      var del = document.createElement('button'); del.className = 'alarm-del'; del.type = 'button'; del.textContent = '×';
+      del.addEventListener('click', function () {
+        var next = (state.announceTimes || []).filter(function (x) { return x.id !== t.id; });
+        changed({ announceTimes: next });
+      });
+      row.appendChild(del); box.appendChild(row);
+    });
+  }
+
+  // v0.7（未发布）：语音播报 UI 回显 + 联动显隐 + 支持状态提示
+  function syncAnnounceUI() {
+    var en = byId('pref-announce-enabled');
+    if (!en || !state) return;
+    en.checked = state.announceEnabled === true;
+    byId('pref-announce-rate').value = String(state.announceRate == null ? 1 : state.announceRate);
+    byId('pref-announce-volume').value = String(state.announceVolume == null ? 1 : state.announceVolume);
+    byId('pref-announce-chime').value = (ALLOWED_CHIME.indexOf(state.announceChime) >= 0) ? state.announceChime : 'gentle';
+    byId('pref-announce-include-date').checked = state.announceIncludeDate === true;
+    byId('pref-announce-rule').value = (ALLOWED_RULES.indexOf(state.announceRule) >= 0) ? state.announceRule : 'hourly';
+    byId('pref-announce-interval').value = String(state.announceInterval == null ? 30 : state.announceInterval);
+    byId('pref-announce-quiet').checked = state.announceQuiet === true;
+    byId('pref-announce-quiet-start').value = state.announceQuietStart || '22:00';
+    byId('pref-announce-quiet-end').value = state.announceQuietEnd || '07:00';
+    byId('announce-interval-row').hidden = state.announceRule !== 'interval';
+    byId('announce-times-row').hidden = state.announceRule !== 'custom';
+    byId('announce-quiet-row').hidden = state.announceQuiet !== true;
+    fillVoiceSelect(typeof state.announceVoice === 'string' ? state.announceVoice : '');
+    renderAnnounceTimes();
+    var note = byId('announce-support-note');
+    if (note) {
+      if (!Announce.supported() || Announce.voices().length === 0) note.textContent = I18n.t(STRINGS_LANG(), 'announceVoiceUnsupported');
+      else note.textContent = '';
+    }
   }
 
   // v0.6.2：校时页显示当前编辑目标窗口的时区；系统校时校准 UTC 绝对时间，不分区。
@@ -1049,6 +1136,7 @@
     if (out) out.textContent = Math.round((Number(state.scale) || 1) * 100) + '%';
     renderAlarmList();
     syncAlarmToneUI();
+    syncAnnounceUI();
     renderClockManager();
     refreshTargetOptions();
     updateTimerUI();
@@ -1275,6 +1363,41 @@
     byId('timer-warn-seconds').addEventListener('change', function (e) {
       changed({ timerWarnSeconds: Math.min(300, Math.max(5, Number(e.target.value) || 30)) });
     });
+
+    // v0.7（未发布）：语音播报 —— 总开关 / 声音 / 语速 / 音量 / 提示音 / 规则 / 间隔 / 指定时刻 / 免打扰
+    (function () {
+      byId('pref-announce-enabled').addEventListener('change', function (e) { changed({ announceEnabled: e.target.checked }); });
+      byId('pref-announce-voice').addEventListener('change', function (e) { changed({ announceVoice: e.target.value }); });
+      byId('pref-announce-rate').addEventListener('input', function (e) { changed({ announceRate: Math.min(2, Math.max(0.5, Number(e.target.value) || 1)) }); });
+      byId('pref-announce-volume').addEventListener('input', function (e) { changed({ announceVolume: Math.min(1, Math.max(0, Number(e.target.value) || 1)) }); });
+      byId('pref-announce-chime').addEventListener('change', function (e) {
+        changed({ announceChime: e.target.value });
+        if (e.target.value !== 'none' && Alarm.playChime) Alarm.playChime(e.target.value);
+      });
+      byId('pref-announce-include-date').addEventListener('change', function (e) { changed({ announceIncludeDate: e.target.checked }); });
+      byId('pref-announce-rule').addEventListener('change', function (e) { changed({ announceRule: e.target.value }); });
+      byId('pref-announce-interval').addEventListener('change', function (e) { changed({ announceInterval: Math.min(120, Math.max(5, Number(e.target.value) || 30)) }); });
+      byId('pref-announce-quiet').addEventListener('change', function (e) { changed({ announceQuiet: e.target.checked }); });
+      byId('pref-announce-quiet-start').addEventListener('change', function (e) { changed({ announceQuietStart: e.target.value }); });
+      byId('pref-announce-quiet-end').addEventListener('change', function (e) { changed({ announceQuietEnd: e.target.value }); });
+      byId('announce-preview').addEventListener('click', function () {
+        if (state.announceChime && state.announceChime !== 'none' && Alarm.playChime) Alarm.playChime(state.announceChime);
+        Announce.preview(state);
+      });
+      (function () {
+        var h = byId('announce-hour'), m = byId('announce-minute'), i, o;
+        for (i = 0; i < 24; i++) { o = document.createElement('option'); o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2); h.appendChild(o); }
+        for (i = 0; i < 60; i++) { o = document.createElement('option'); o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2); m.appendChild(o); }
+        h.value = '09'; m.value = '00';
+      })();
+      byId('announce-time-add').addEventListener('click', function () {
+        var v = byId('announce-hour').value + ':' + byId('announce-minute').value;
+        if (!/^\d{2}:\d{2}$/.test(v)) return;
+        var list = (state.announceTimes || []).slice();
+        list.push({ id: 'an' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), time: v });
+        changed({ announceTimes: list });
+      });
+    })();
     byId('alarm-snooze').addEventListener('click', function () {
       var list = (state.alarms || []).slice();
       list.push(Alarm.snooze());

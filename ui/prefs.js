@@ -32,6 +32,20 @@
     extraClocks: [],           // v0.5: [{id,label,offset,style,showSeconds,visible}] 窗口管理器
     tzOffset: null,            // v0.6: 每窗口时区偏移（分钟，null=本机时间）
     tzLabel: '',               // v0.6: 每窗口时区显示名
+    // v0.7（未发布）：语音播报（默认关闭）
+    announceEnabled: false,
+    announceRule: 'hourly',
+    announceInterval: 30,
+    announceTimes: [],
+    announceVoice: '',
+    announceRate: 1,
+    announceVolume: 1,
+    announceChime: 'gentle',
+    announceQuiet: false,
+    announceQuietStart: '22:00',
+    announceQuietEnd: '07:00',
+    announceIncludeDate: false,
+    announceLang: '',
     runAsAdmin: false,
     x: null,
     y: null
@@ -57,7 +71,12 @@
   // 全局项（所有窗口共享）vs 每窗口项。save() 按此分流。
   var GLOBAL_KEYS = ['lang', 'alarms', 'alarmSound', 'alarmTone', 'alarmRingSeconds',
     'timerAction', 'timerMode', 'timerWarnMode', 'timerWarnSeconds',
-    'autoTimeSync', 'autostart', 'runAsAdmin', 'extraClocks'];
+    'autoTimeSync', 'autostart', 'runAsAdmin', 'extraClocks',
+    // v0.7（未发布）：语音播报全局项
+    'announceEnabled', 'announceRule', 'announceInterval', 'announceTimes',
+    'announceVoice', 'announceRate', 'announceVolume', 'announceChime',
+    'announceQuiet', 'announceQuietStart', 'announceQuietEnd',
+    'announceIncludeDate', 'announceLang'];
   var WINDOW_KEYS = ['style', 'showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop',
     'backdrop', 'scale', 'opacity', 'font', 'customFont', 'color', 'customColor',
     'analogTheme', 'analogPenetrate', 'clickThrough', 'tzOffset', 'tzLabel', 'x', 'y'];
@@ -85,7 +104,9 @@
     if (typeof obj.backdrop === 'string' && obj.backdrop) out.backdrop = obj.backdrop;
     if (obj.lang === 'en' || obj.lang === 'zh-CN') out.lang = obj.lang;
     ['showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop', 'autostart',
-     'analogPenetrate', 'clickThrough', 'alarmSound', 'autoTimeSync', 'runAsAdmin'
+     'analogPenetrate', 'clickThrough', 'alarmSound', 'autoTimeSync', 'runAsAdmin',
+     // v0.7（未发布）：语音播报开关类
+     'announceEnabled', 'announceQuiet', 'announceIncludeDate'
     ].forEach(function (k) {
       if (obj[k] !== undefined) out[k] = !!obj[k];
     });
@@ -138,6 +159,24 @@
           visible: c.visible === undefined ? true : !!c.visible
         };
       });
+    }
+    // v0.7（未发布）：语音播报字段白名单 + 类型钳制
+    if (['hourly', 'half', 'quarter', 'interval', 'custom'].indexOf(obj.announceRule) >= 0) out.announceRule = obj.announceRule;
+    if (typeof obj.announceVoice === 'string') out.announceVoice = obj.announceVoice.slice(0, 256);
+    if (['zh-CN', 'en', ''].indexOf(obj.announceLang) >= 0) out.announceLang = obj.announceLang;
+    if (['none', 'gentle', 'bell', 'tick', 'rise', 'chord'].indexOf(obj.announceChime) >= 0) out.announceChime = obj.announceChime;
+    if (typeof obj.announceRate === 'number' && isFinite(obj.announceRate)) out.announceRate = Math.min(2, Math.max(0.5, obj.announceRate));
+    if (typeof obj.announceVolume === 'number' && isFinite(obj.announceVolume)) out.announceVolume = Math.min(1, Math.max(0, obj.announceVolume));
+    if (typeof obj.announceInterval === 'number' && isFinite(obj.announceInterval)) out.announceInterval = Math.min(120, Math.max(5, Math.round(obj.announceInterval)));
+    if (/^([01]\d|2[0-3]):[0-5]\d$/.test(obj.announceQuietStart || '')) out.announceQuietStart = obj.announceQuietStart;
+    else if (obj.announceQuietStart) out.announceQuietStart = DEFAULTS.announceQuietStart;
+    if (/^([01]\d|2[0-3]):[0-5]\d$/.test(obj.announceQuietEnd || '')) out.announceQuietEnd = obj.announceQuietEnd;
+    else if (obj.announceQuietEnd) out.announceQuietEnd = DEFAULTS.announceQuietEnd;
+    if (Array.isArray(obj.announceTimes)) {
+      out.announceTimes = obj.announceTimes
+        .filter(function (t) { return t && typeof t.time === 'string' && /^\d{2}:\d{2}$/.test(t.time); })
+        .slice(0, 20)
+        .map(function (t) { return { id: String(t.id || ('an' + Math.random().toString(36).slice(2, 9))), time: t.time }; });
     }
     return out;
   }
@@ -390,7 +429,9 @@
     if (!isNative) return Promise.resolve(!!enabled);
     return invoke('set_autostart', { enabled: !!enabled })
       .then(function (res) { return res === undefined || res === null ? !!enabled : !!res; })
-      .catch(function () { return !!enabled; });
+      // 关键修复：命令失败时如实返回 false，绝不再「假成功」掩盖真实错误
+      // （Tauri v2 在 capabilities 未授权或注册表写入异常时命令会 reject）。
+      .catch(function () { return false; });
   }
 
   // ------------------------------------------------ cross-window sync / extras

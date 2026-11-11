@@ -76,8 +76,56 @@ jobs:
           projectPath: "."
           tauriScript: cargo tauri
           tagName: ${{ github.ref_name }}
-          releaseName: "Desk Clock ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install. Built automatically by GitHub Actions."
+          releaseName: "Desk Clock ${{ github.ref_name }} 🕐"
+          releaseBody: |
+            ## 🕐 Desk Clock v0.7.0
+
+            好看、好用、还跨平台的开源桌面时钟 —— 透明悬浮在壁纸之上，无边框、无黑底。
+            本次新增「语音报时」，并修复 Windows 开机自启不生效的问题。
+
+            ### 🔊 新增 · 语音报时（默认关闭）
+
+            到点用语音把当前时间读出来，全程纯前端 Web Speech API，零新依赖、不常驻轮询、不增资源占用。
+
+            - **可挑选播报声音**：系统可用语音音色（跟随系统 / 自动匹配语言）、语速 0.5–2、音量 0–1、报时前提示音（复用 6 种内置铃声，也可选「无」），带「试听」按钮。
+            - **可挑选播报规则**：整点 / 整点+半点 / 每刻钟 / 自定义间隔（5–120 分钟）/ 指定时刻（可多个）；支持免打扰时段（可跨午夜）；可选播报日期与星期。
+            - **中英文报时文案**：跟随界面语言与 12/24 小时制，如「现在是上午九点整」/「It's 9:00 AM.」。
+            - **默认不开启**：总开关默认关闭；关闭时绝不调用语音引擎。配置可回显、跨窗口同步。
+            - **优雅降级**：系统无语音引擎（如部分 Linux WebKitGTK）时仅播提示音并在界面提示，不报错、不影响其它功能。
+            - 配置落在设置「闹钟」页新增的两张卡片，不新增 Tab。
+
+            ### 🚀 修复 · Windows 开机自启不生效
+
+            反馈：Windows 下勾选开机自启、重启后程序没有真正启动。定位到三处问题并全部修复。
+
+            - **插件注册方式错误（根因）**：原来在 `.setup()` 回调内用 `let _ = handle.plugin(...)` 动态注册 autostart 插件并吞掉初始化错误；该插件靠 setup hook 创建 `AutoLaunchManager` 状态，注册失败会导致后续 `app.autolaunch()` 拿不到状态、注册动作静默失效。现改为官方推荐的 **Builder 链 `.plugin(...)` 注册**。
+            - **缺少写入后校验**：`set_autostart` 现在写入注册表后立即回读系统真实状态，不一致即返回错误，不再「写完就当成功」。
+            - **补齐插件权限与诚实反馈**：`capabilities/default.json` 增加 `autostart:default` 授权；前端命令失败时如实返回 `false` 让开关回弹，不再把失败伪装成「已开启」。
+
+            ### 📝 文档
+
+            - 重设计 `README.md` 项目介绍，加入语义化 emoji 与「一眼看懂」速览表；补全 v0.7.0 功能、版本演进与下载说明。
+            - `docs/SPEC.md` 补充 `DeskClock.Announce` 模块接口。
+
+            ### 📥 下载与安装
+
+            | 平台 | 文件 |
+            |---|---|
+            | 🪟 Windows | `*.msi` 或 `*-setup.exe` |
+            | 🍎 macOS Intel | `*x64.dmg` |
+            | 🍎 macOS Apple Silicon | `*aarch64.dmg` |
+            | 🐧 Debian / Ubuntu | `*.deb` |
+            | 🐧 Fedora / RHEL | `*.rpm` |
+            | 🐧 通用 Linux | `*.AppImage` |
+
+            > ⚠️ 安装包未做代码签名：macOS 首次打开需右键→打开，Windows 可能弹 SmartScreen 点「仍要运行」。
+            > 旧版本覆盖安装即可，配置（含窗口清单与位置）自动保留、自动迁移。
+
+            ### ✅ 验证
+
+            新增 `scripts/verify_announce.py`（77 项，真实 Chromium + TTS mock）+ 原有 9 套回归，合计 **418 项全部通过**，无回归。
+
+            完整版本记录见 [CHANGELOG.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/CHANGELOG.md) · 项目介绍见 [README.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/README.md) · 协议 MIT。
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

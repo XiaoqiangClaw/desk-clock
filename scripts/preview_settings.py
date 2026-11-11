@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Standalone preview tool: regenerate the 3 settings-window screenshots.
 
-Not part of any regression assertion. Produces v0.6.3 settings screenshots:
+Not part of any regression assertion. Produces the settings-window screenshots
+referenced by README.md (file names kept stable so existing links keep working):
   .preview/settings-zh.png           zh-CN, appearance tab, 760x700
   .preview/settings-en.png           en, appearance tab, 760x700
   .preview/settings-window-v063.png  zh-CN, window tab with populated manager

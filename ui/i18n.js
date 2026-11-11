@@ -93,6 +93,24 @@
       alertActionShutdown: '关机', alertActionReboot: '重启',
       trayHint: '本程序常驻系统托盘，不在任务栏显示；关闭窗口只会隐藏到托盘，托盘菜单可重新显示或退出。',
       versionTip: '点击打开项目主页',
+      // v0.7（未发布）：语音播报
+      announceTitle: '语音播报', announceEnabled: '启用语音播报',
+      announceEnabledNote: '开启后按下方规则到点用语音报时；默认不开启。',
+      announceVoice: '播报声音', announceVoiceDefault: '跟随系统（自动匹配语言）',
+      announceVoiceNote: '从系统可用语音中选择；不同操作系统可用语音不同。',
+      announceVoiceUnsupported: '当前系统未提供语音引擎；播报将仅播放提示音（若已选）。',
+      announceRate: '语速', announceVolume: '音量',
+      announceChime: '报时前提示音', announceChimeNone: '无',
+      announcePreview: '试听', announceIncludeDate: '播报日期 / 星期',
+      announceRuleTitle: '播报规则', announceRule: '规则',
+      announceRuleNote: '选择到点报时的触发节奏。',
+      ruleHourly: '整点（每小时）', ruleHalf: '整点 + 半点',
+      ruleQuarter: '每刻钟', ruleInterval: '自定义间隔', ruleCustom: '指定时刻',
+      announceInterval: '间隔（分钟）', announceIntervalNote: '每 N 分钟报时一次（5–120）。',
+      announceTimes: '指定时刻（可多个）', announceTimeAdd: '＋ 添加', announceTimeEmpty: '（未设置指定时刻）',
+      announceQuiet: '免打扰时段', announceQuietStart: '开始', announceQuietEnd: '结束',
+      announceQuietNote: '该时段内不播报（支持跨午夜）。',
+      announceRules: { hourly: '整点（每小时）', half: '整点 + 半点', quarter: '每刻钟', interval: '自定义间隔', custom: '指定时刻' },
       styles: { flip: '翻页卡片', minimal: '极简细体', neon: '霓虹', eink: '电子墨水', segment: '七段数码', typewriter: '打字机', glass: '毛玻璃', analog: '指针表盘' },
       tones: { gentle: '柔和三连', bell: '清脆叮咚', tick: '电子滴答', rise: '上升音阶', chord: '和弦钟声', custom: '自定义音频…' },
       zones: { '-600': 'UTC-10 夏威夷', '-480': 'UTC-8  洛杉矶', '-420': 'UTC-7  丹佛', '-360': 'UTC-6  芝加哥', '-300': 'UTC-5  纽约', '-240': 'UTC-4  多伦多', '-180': 'UTC-3  圣保罗', '0': 'UTC+0  伦敦', '60': 'UTC+1  巴黎/柏林', '120': 'UTC+2  开罗', '180': 'UTC+3  莫斯科', '240': 'UTC+4  迪拜', '330': 'UTC+5:30 印度', '420': 'UTC+7  曼谷', '480': 'UTC+8  北京/新加坡', '540': 'UTC+9  东京', '600': 'UTC+10 悉尼', '660': 'UTC+11 墨尔本', '720': 'UTC+12 奥克兰', '840': 'UTC+14 斐济', '__custom__': '自定义 UTC 偏移' },
@@ -182,6 +200,24 @@
       alertActionShutdown: 'Shutdown', alertActionReboot: 'Reboot',
       trayHint: 'The clock lives in the system tray (no taskbar icon). Closing this window only hides it — use the tray menu to show or quit.',
       versionTip: 'Click to open the project page',
+      // v0.7 (unreleased): voice time announcement
+      announceTitle: 'Time announcement', announceEnabled: 'Enable voice announcement',
+      announceEnabledNote: 'Announces the time by voice on the schedule below; off by default.',
+      announceVoice: 'Voice', announceVoiceDefault: 'System default (auto match language)',
+      announceVoiceNote: 'Choose from the system voices; availability varies by OS.',
+      announceVoiceUnsupported: 'No speech engine on this system; only the chime will play (if set).',
+      announceRate: 'Rate', announceVolume: 'Volume',
+      announceChime: 'Chime before', announceChimeNone: 'None',
+      announcePreview: 'Preview', announceIncludeDate: 'Include date / weekday',
+      announceRuleTitle: 'Schedule', announceRule: 'Rule',
+      announceRuleNote: 'When to announce the time.',
+      ruleHourly: 'Every hour', ruleHalf: 'Hour + half-hour',
+      ruleQuarter: 'Quarterly (15 min)', ruleInterval: 'Custom interval', ruleCustom: 'Specific times',
+      announceInterval: 'Interval (min)', announceIntervalNote: 'Announce every N minutes (5–120).',
+      announceTimes: 'Specific times (multiple)', announceTimeAdd: '＋ Add', announceTimeEmpty: '(no specific times)',
+      announceQuiet: 'Quiet hours', announceQuietStart: 'Start', announceQuietEnd: 'End',
+      announceQuietNote: 'No announcements in this window (crosses midnight ok).',
+      announceRules: { hourly: 'Every hour', half: 'Hour + half-hour', quarter: 'Quarterly (15 min)', interval: 'Custom interval', custom: 'Specific times' },
       styles: { flip: 'Flip', minimal: 'Minimal', neon: 'Neon', eink: 'E-ink', segment: 'Segment', typewriter: 'Typewriter', glass: 'Glass', analog: 'Analog' },
       tones: { gentle: 'Soft triple', bell: 'Bright bell', tick: 'Digital tick', rise: 'Rising scale', chord: 'Chord chime', custom: 'Custom audio…' },
       zones: { '-600': 'UTC-10 Honolulu', '-480': 'UTC-8  Los Angeles', '-420': 'UTC-7  Denver', '-360': 'UTC-6  Chicago', '-300': 'UTC-5  New York', '-240': 'UTC-4  Toronto', '-180': 'UTC-3  São Paulo', '0': 'UTC+0  London', '60': 'UTC+1  Paris/Berlin', '120': 'UTC+2  Cairo', '180': 'UTC+3  Moscow', '240': 'UTC+4  Dubai', '330': 'UTC+5:30 India', '420': 'UTC+7  Bangkok', '480': 'UTC+8  Beijing/Singapore', '540': 'UTC+9  Tokyo', '600': 'UTC+10 Sydney', '660': 'UTC+11 Melbourne', '720': 'UTC+12 Auckland', '840': 'UTC+14 Fiji', '__custom__': 'Custom UTC offset' },
@@ -228,6 +264,8 @@
     opts('cm-zone', 'zones');
     opts('cm-style', 'styles');
     opts('pref-alarm-tone', 'tones');
+    opts('pref-announce-rule', 'announceRules');
+    opts('pref-announce-chime', 'tones');
     var gear = document.getElementById('gear');
     if (gear) { gear.title = t(L, 'gearTitle'); gear.setAttribute('aria-label', t(L, 'gearTitle')); }
     var rh = document.getElementById('resize-handle');

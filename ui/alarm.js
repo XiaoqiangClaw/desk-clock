@@ -230,6 +230,13 @@
         customBlobUrl = readCustomFromStorage();
         return !!customBlobUrl;
       });
+    },
+    // v0.7（未发布）：单次提示音（语音播报的前导音）。只合成发声一次，
+    // 不启动 2.1s 循环响铃、不修改 ringOn 状态；'none' 表示不发声。
+    playChime: function (tone) {
+      if (tone === 'none' || tone === undefined || tone === null) return;
+      if (typeof tone === 'string' && tone !== 'custom' && ALLOWED_TONES.indexOf(tone) >= 0) chime(tone);
+      else chime('gentle');
     }
   };
 })();

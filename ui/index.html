@@ -228,6 +228,88 @@
             </div>
             <div id="alarm-list" class="alarm-list"></div>
           </div>
+
+          <!-- v0.7（未发布）：语音播报，默认关闭 -->
+          <div class="card">
+            <div class="card-title" data-i18n="announceTitle">语音播报</div>
+            <label><span data-i18n="announceEnabled">启用语音播报</span>
+              <input id="pref-announce-enabled" type="checkbox" class="dc-switch">
+            </label>
+            <div class="field-note" data-i18n="announceEnabledNote">开启后按下方规则到点用语音报时；默认不开启。</div>
+            <label><span data-i18n="announceVoice">播报声音</span>
+              <select id="pref-announce-voice" class="dc-select">
+                <option value="" data-i18n="announceVoiceDefault">跟随系统（自动匹配语言）</option>
+              </select>
+            </label>
+            <div id="announce-support-note" class="field-note" data-dyn></div>
+            <div class="field-note" data-i18n="announceVoiceNote">从系统可用语音中选择；不同操作系统可用语音不同。</div>
+            <label><span data-i18n="announceRate">语速</span>
+              <input id="pref-announce-rate" type="range" min="0.5" max="2" step="0.1" value="1">
+            </label>
+            <label><span data-i18n="announceVolume">音量</span>
+              <input id="pref-announce-volume" type="range" min="0" max="1" step="0.1" value="1">
+            </label>
+            <label><span data-i18n="announceChime">报时前提示音</span>
+              <select id="pref-announce-chime" class="dc-select">
+                <option value="none" data-i18n="announceChimeNone">无</option>
+                <option value="gentle" data-i18n="toneGentle">柔和三连</option>
+                <option value="bell" data-i18n="toneBell">清脆叮咚</option>
+                <option value="tick" data-i18n="toneTick">电子滴答</option>
+                <option value="rise" data-i18n="toneRise">上升音阶</option>
+                <option value="chord" data-i18n="toneChord">和弦钟声</option>
+              </select>
+            </label>
+            <label><span data-i18n="announceIncludeDate">播报日期 / 星期</span>
+              <input id="pref-announce-include-date" type="checkbox" class="dc-switch">
+            </label>
+            <div class="alarm-tone-row">
+              <button id="announce-preview" class="dc-btn ghost tiny" type="button" data-i18n="announcePreview">试听</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title" data-i18n="announceRuleTitle">播报规则</div>
+            <label><span data-i18n="announceRule">规则</span>
+              <select id="pref-announce-rule" class="dc-select">
+                <option value="hourly" data-i18n="ruleHourly">整点（每小时）</option>
+                <option value="half" data-i18n="ruleHalf">整点 + 半点</option>
+                <option value="quarter" data-i18n="ruleQuarter">每刻钟</option>
+                <option value="interval" data-i18n="ruleInterval">自定义间隔</option>
+                <option value="custom" data-i18n="ruleCustom">指定时刻</option>
+              </select>
+            </label>
+            <div class="field-note" data-i18n="announceRuleNote">选择到点报时的触发节奏。</div>
+            <div id="announce-interval-row" hidden>
+              <label><span data-i18n="announceInterval">间隔（分钟）</span>
+                <input id="pref-announce-interval" type="number" min="5" max="120" step="5" value="30" class="dc-input">
+              </label>
+              <div class="field-note" data-i18n="announceIntervalNote">每 N 分钟报时一次（5–120）。</div>
+            </div>
+            <div id="announce-times-row" hidden>
+              <div class="field-note" data-i18n="announceTimes">指定时刻（可多个）</div>
+              <div class="alarm-editor">
+                <div class="alarm-time">
+                  <select id="announce-hour" class="dc-select" aria-label="小时"></select>
+                  <span class="alarm-colon">:</span>
+                  <select id="announce-minute" class="dc-select" aria-label="分钟"></select>
+                </div>
+                <button id="announce-time-add" class="dc-btn tiny" type="button" data-i18n="announceTimeAdd">＋ 添加</button>
+              </div>
+              <div id="announce-time-list" class="alarm-list"></div>
+            </div>
+            <label><span data-i18n="announceQuiet">免打扰时段</span>
+              <input id="pref-announce-quiet" type="checkbox" class="dc-switch">
+            </label>
+            <div id="announce-quiet-row" hidden>
+              <div class="alarm-time">
+                <input id="pref-announce-quiet-start" type="time" value="22:00" class="dc-input" data-i18n-placeholder="announceQuietStart">
+                <span class="alarm-colon">—</span>
+                <input id="pref-announce-quiet-end" type="time" value="07:00" class="dc-input" data-i18n-placeholder="announceQuietEnd">
+              </div>
+              <div class="field-note" data-i18n="announceQuietNote">该时段内不播报（支持跨午夜）。</div>
+            </div>
+          </div>
+
         </section>
 
         <!-- ============================ 定时任务 ============================ -->
@@ -363,6 +445,7 @@
 <script src="prefs.js"></script>
 <script src="fonts.js"></script>
 <script src="alarm.js"></script>
+<script src="announce.js"></script>
 <script src="flip.js"></script>
 <script src="clock.js"></script>
 <script src="app.js"></script>

@@ -76,6 +76,33 @@ pub struct Prefs {
     /// Windows only: request an elevated (administrator) process on every
     /// future launch, including autostart (RUNASADMIN compatibility layer).
     pub run_as_admin: bool,
+    // ---- v0.7 (unreleased): voice time announcement (default OFF) ----
+    /// Master switch; false = feature off (default).
+    pub announce_enabled: bool,
+    /// hourly | half | quarter | interval | custom.
+    pub announce_rule: String,
+    /// Interval (minutes, 5-120) used by the `interval` rule.
+    pub announce_interval: f64,
+    /// Custom time list [{id,time:"HH:MM"}] used by the `custom` rule.
+    pub announce_times: Vec<serde_json::Value>,
+    /// voiceURI ("" = auto-match the UI language).
+    pub announce_voice: String,
+    /// Speech rate 0.5-2.
+    pub announce_rate: f64,
+    /// Speech volume 0-1.
+    pub announce_volume: f64,
+    /// Chime before speaking: none | gentle | bell | tick | rise | chord.
+    pub announce_chime: String,
+    /// Enable a quiet (no-announce) window.
+    pub announce_quiet: bool,
+    /// Quiet window start "HH:MM".
+    pub announce_quiet_start: String,
+    /// Quiet window end "HH:MM" (may cross midnight).
+    pub announce_quiet_end: String,
+    /// Also speak the date / weekday.
+    pub announce_include_date: bool,
+    /// "" = follow the UI language; else "zh-CN" / "en".
+    pub announce_lang: String,
     /// Physical pixels (as reported by tauri://move events).
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -112,6 +139,20 @@ impl Default for Prefs {
             auto_time_sync: false,
             extra_clocks: Vec::new(),
             run_as_admin: false,
+            // v0.7 (unreleased): voice time announcement — default OFF.
+            announce_enabled: false,
+            announce_rule: "hourly".into(),
+            announce_interval: 30.0,
+            announce_times: Vec::new(),
+            announce_voice: String::new(),
+            announce_rate: 1.0,
+            announce_volume: 1.0,
+            announce_chime: "gentle".into(),
+            announce_quiet: false,
+            announce_quiet_start: "22:00".into(),
+            announce_quiet_end: "07:00".into(),
+            announce_include_date: false,
+            announce_lang: String::new(),
             x: None,
             y: None,
         }
@@ -459,7 +500,17 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     } else {
         mgr.disable().map_err(|e| e.to_string())?;
     }
-    Ok(mgr.is_enabled().unwrap_or(false))
+    // v0.7: read the system state back instead of trusting the write.
+    // If the registration silently failed, return an error so the UI can show
+    // failure rather than a false "enabled" (old code just returned is_enabled()).
+    let actual = mgr.is_enabled().map_err(|e| e.to_string())?;
+    if actual != enabled {
+        return Err(format!(
+            "autostart write did not stick (wanted {}, system reports {})",
+            enabled, actual
+        ));
+    }
+    Ok(actual)
 }
 
 #[tauri::command]
@@ -532,7 +583,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock v0.6.3 · 设置")
+    .title("Desk Clock v0.7.0 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -647,7 +698,7 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock v0.6.3 · {}", label))
+    .title(format!("Desk Clock v0.7.0 · {}", label))
     // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
     .inner_size(
         cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
@@ -1447,7 +1498,7 @@ fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> 
         "alert",
         WebviewUrl::App(PathBuf::from("alert.html")),
     )
-    .title("Desk Clock v0.6.3 · 提醒")
+    .title("Desk Clock v0.7.0 · 提醒")
     .inner_size(360.0, 220.0)
     .resizable(false)
     .decorations(false)
@@ -1574,14 +1625,17 @@ pub fn run() {
             }
             let _ = show_main_now(app);
         }))
+        // v0.7: autostart MUST be registered on the Builder chain (official API).
+        // Its setup hook creates the AutoLaunchManager state; registering it lazily
+        // inside .setup() via `let _ = handle.plugin(...)` silently dropped init
+        // errors and left the state missing, so app.autolaunch() could not work —
+        // the classic "checkbox looks on, but Windows never starts the app" symptom.
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--startup"]),
+        ))
         .setup(|app| {
             let handle = app.handle();
-            // macOS uses a LaunchAgent; Windows/Linux register natively.
-            let _ = handle.plugin(tauri_plugin_autostart::init(
-                MacosLauncher::LaunchAgent,
-                Some(vec!["--startup"]),
-            ));
-
             let prefs = read_prefs(handle);
             app.manage(PrefsState(Mutex::new(prefs.clone())));
             app.manage(TimerState(Mutex::new(TimerSnapshot::default())));
