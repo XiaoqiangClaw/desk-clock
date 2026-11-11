@@ -5,6 +5,10 @@
   // 重复规则引擎 + 中国大陆法定日历（工作日/周末/节假日/交易日）。
   // 设计：零运行时依赖、可离线；日历数据来自 ui/calendar-data.js（静态、挂全局）。
   // 仅用两个原语集合 h(法定节假日停休日) / w(调休补班日) 派生全部判断，见 gen-calendar.py。
+  //
+  // 运行时热更新（v0.7.3）：window.DeskClock.CalendarData 初始值来自内置 calendar-data.js，
+  // CalendarSync 拉取到更新的数据后调用 setData() 替换本闭包内的 CD，四种规则（含 A股
+  // 交易日）随之自动生效。数据严格校验 + 只增不减，防止损坏/回退的数据把日历判定弄错。
 
   var CD = (window.DeskClock && window.DeskClock.CalendarData) || { years: {} };
 
@@ -46,6 +50,48 @@
     if (wd === 0 || wd === 6) return false;                     // 周末（含调休补班）一律休市
     return !isHoliday(d);                                       // 周一~周五 且非法定节假日
   }
+
+  // ---- 日历数据校验 / 覆盖 / 热替换（v0.7.3 运行时同步用）----
+  // 严格校验：只接受结构完全合法的数据，任何异常都拒绝，绝不让它进入判定路径。
+  function coverageOf(d) {
+    var ys = [];
+    if (!d || !d.years || typeof d.years !== 'object') return ys;
+    for (var k in d.years) {
+      if (Object.prototype.hasOwnProperty.call(d.years, k) && /^\d{4}$/.test(k)) ys.push(parseInt(k, 10));
+    }
+    return ys.sort(function (a, b) { return a - b; });
+  }
+  function validateData(d) {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return false;
+    if (!d.years || typeof d.years !== 'object' || Array.isArray(d.years)) return false;
+    var count = 0, k, j, r;
+    for (k in d.years) {
+      if (!Object.prototype.hasOwnProperty.call(d.years, k)) continue;
+      if (!/^\d{4}$/.test(k)) return false;
+      r = d.years[k];
+      if (!r || typeof r !== 'object' || !Array.isArray(r.h) || !Array.isArray(r.w)) return false;
+      if (r.h.length > 200 || r.w.length > 200) return false;   // 防异常膨胀
+      for (j = 0; j < r.h.length; j++) if (typeof r.h[j] !== 'string' || !/^\d{4}$/.test(r.h[j])) return false;
+      for (j = 0; j < r.w.length; j++) if (typeof r.w[j] !== 'string' || !/^\d{4}$/.test(r.w[j])) return false;
+      count++;
+    }
+    return count > 0 && count <= 40;                            // 合理年份数量
+  }
+  // 只增不减：新数据年份集合必须是当前的超集（生成器始终全量生成，天然满足），
+  // 防止 main 分支数据意外回退或第三方注入旧数据把用户降级。拒绝时保留现有数据。
+  function setData(d) {
+    if (!validateData(d)) return { ok: false, reason: 'invalid' };
+    var oldYs = coverageOf(CD), newYs = coverageOf(d), i, seen = {};
+    for (i = 0; i < newYs.length; i++) seen[newYs[i]] = true;
+    for (i = 0; i < oldYs.length; i++) {
+      if (!seen[oldYs[i]]) return { ok: false, reason: 'rollback' };
+    }
+    CD = d;
+    window.DeskClock.CalendarData = d;
+    API.CalendarData = d;
+    return { ok: true, coverage: newYs };
+  }
+  function coverage() { return coverageOf(CD); }
 
   // ---- 规则归一化（防御：损坏/旧数据不会让 UI 崩）----
   function normalizeRule(rule) {
@@ -121,12 +167,15 @@
     return s;
   }
 
-  window.DeskClock.Schedule = {
+  var API = {
     MODES: MODES,
     CalendarData: CD,
     isWorkday: isWorkday, isHoliday: isHoliday, isWeekend: isWeekend, isTradingDay: isTradingDay,
     covered: covered,
     normalizeRule: normalizeRule, fromLegacy: fromLegacy, matches: matches, summary: summary,
+    // v0.7.3 运行时数据同步 API
+    setData: setData, validateData: validateData, coverage: coverage,
     _md: md, _ymd: ymd
   };
+  window.DeskClock.Schedule = API;
 })();

@@ -46,6 +46,8 @@
     announceQuietEnd: '07:00',
     announceIncludeDate: false,
     announceLang: '',
+    // v0.7.3：日历数据自动同步（默认开启；关闭后仅用内置/缓存数据，绝不联网）
+    calendarAutoSync: true,
     runAsAdmin: false,
     x: null,
     y: null
@@ -76,7 +78,9 @@
     'announceEnabled', 'announceRule', 'announceInterval', 'announceTimes',
     'announceVoice', 'announceRate', 'announceVolume', 'announceChime',
     'announceQuiet', 'announceQuietStart', 'announceQuietEnd',
-    'announceIncludeDate', 'announceLang'];
+    'announceIncludeDate', 'announceLang',
+    // v0.7.3：日历数据自动同步开关（默认开启，用户可关）
+    'calendarAutoSync'];
   var WINDOW_KEYS = ['style', 'showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop',
     'backdrop', 'scale', 'opacity', 'font', 'customFont', 'color', 'customColor',
     'analogTheme', 'analogPenetrate', 'clickThrough', 'tzOffset', 'tzLabel', 'x', 'y'];
@@ -106,7 +110,9 @@
     ['showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop', 'autostart',
      'analogPenetrate', 'clickThrough', 'alarmSound', 'autoTimeSync', 'runAsAdmin',
      // v0.7（未发布）：语音播报开关类
-     'announceEnabled', 'announceQuiet', 'announceIncludeDate'
+     'announceEnabled', 'announceQuiet', 'announceIncludeDate',
+     // v0.7.3：日历自动同步开关
+     'calendarAutoSync'
     ].forEach(function (k) {
       if (obj[k] !== undefined) out[k] = !!obj[k];
     });

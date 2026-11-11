@@ -431,6 +431,17 @@
             <div class="about-meta"><span>Desk Clock</span><button id="about-version" class="ver-badge" type="button" title="点击打开项目主页"></button><span>MIT · 开源免费</span></div>
           </div>
 
+          <!-- v0.7.3：日历数据自动同步（工作日/周末/节假日/A股交易日共用同一份国务院放假数据） -->
+          <div class="card">
+            <div class="card-title" data-i18n="calSyncTitle">📅 日历数据</div>
+            <div id="cal-sync-status" class="field-note" data-dyn></div>
+            <label><span data-i18n="calSyncAuto">自动更新日历数据</span>
+              <input id="pref-cal-autosync" type="checkbox" class="dc-switch">
+            </label>
+            <div class="field-note" data-i18n="calSyncNote">后台静默跟随国务院放假/调休安排自动补齐未来年份，工作日、周末、法定节假日与 A股交易日随之更新；离线或失败时自动使用内置数据，不影响使用。</div>
+            <button id="cal-sync-now" class="dc-btn tiny ghost" type="button" data-i18n="calSyncNow">立即检查日历数据</button>
+          </div>
+
           <!-- v0.5：去掉多余的「关闭」按钮（头部 × 已可关闭），重排还原区 -->
           <div class="card reset-card">
             <div class="card-title">还原</div>
@@ -467,6 +478,7 @@
 <script src="clock.js"></script>
 <script src="calendar-data.js"></script>
 <script src="schedule.js"></script>
+<script src="calendar-sync.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

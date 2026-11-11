@@ -1,7 +1,14 @@
-// 自动生成，请勿手改；更新数据请运行 scripts/gen-calendar.py
+// 自动生成，请勿手改；更新数据请运行 scripts/gen-calendar.py（.github/workflows/calendar-sync.yml 会定时自动重跑）
 // 数据来源：chinese_calendar（国务院办公厅历年放假安排映射），覆盖 2024, 2025, 2026, 2027
 window.DeskClock = window.DeskClock || {};
 window.DeskClock.CalendarData = {
+  "coverage": [
+    "2024",
+    "2025",
+    "2026",
+    "2027"
+  ],
+  "schema": 1,
   "source": "chinese_calendar (国务院办公厅历年放假安排映射)",
   "years": {
     "2024": {

@@ -16,7 +16,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.7.2';
+  var APP_VERSION = '0.7.3';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -219,6 +219,8 @@
       next.analogTheme !== state.analogTheme;
     var isSettings = isSettingsWindow; // 设置窗口才需要重刷控制面板
     state = Prefs.normalize(next);
+    // v0.7.3：跨窗口同步「日历自动更新」开关
+    applyCalSyncEnabled();
     // 高频跨窗口同步：时钟窗口走轻路径（只改 CSS 变量），设置窗口才全量
     if (isSettings) applyRoot(); else applyRootLite();
     if (engine) {
@@ -340,6 +342,31 @@
 
   function setUpdateStatus(text) {
     var el = byId('update-status'); if (el) el.textContent = text;
+  }
+
+  // ------------------------------------------- v0.7.3 日历数据同步 UI
+  function calSync() { return window.DeskClock && window.DeskClock.CalendarSync; }
+  function calCoverageText(st) {
+    var ys = (st && st.coverage) || [];
+    if (!ys.length) return '—';
+    return ys.length === 1 ? String(ys[0]) : (ys[0] + '–' + ys[ys.length - 1]);
+  }
+  // 渲染「日历数据」卡片里的状态行（data-dyn，由 JS 管理，不被 i18n apply 覆盖）
+  function renderCalSyncStatus(st) {
+    var el = byId('cal-sync-status');
+    if (!el || !st) return;
+    var L = STRINGS_LANG(), cov = calCoverageText(st), key;
+    if (st.busy) { el.textContent = I18n.t(L, 'calSyncStatusChecking'); return; }
+    if (!st.enabled) key = 'calSyncStatusOff';
+    else if (st.lastError) key = 'calSyncStatusFail';
+    else if (st.source === 'remote') key = 'calSyncStatusRemote';
+    else if (st.source === 'cache') key = 'calSyncStatusCached';
+    else key = 'calSyncStatusBuiltin';
+    el.textContent = I18n.t(L, key).replace('%s', cov);
+  }
+  function applyCalSyncEnabled() {
+    var CS = calSync();
+    if (CS) CS.setEnabled(state.calendarAutoSync !== false);
   }
 
   function semverNewer(a, b) {
@@ -706,6 +733,33 @@
     })();
     // 自动检查（静默）：只在独立设置窗口启动时跑一次
     if (isSettingsWindow && Prefs.isNative) checkUpdate(false);
+
+    // v0.7.3：日历数据自动同步开关 + 手动检查按钮
+    (function () {
+      var cas = byId('pref-cal-autosync');
+      if (cas) cas.addEventListener('change', function (e) {
+        changed({ calendarAutoSync: e.target.checked });
+      });
+      var btn = byId('cal-sync-now');
+      if (btn) btn.addEventListener('click', function () {
+        var CS = calSync(); if (!CS) return;
+        btn.disabled = true;
+        CS.syncNow(true).then(function (res) {
+          btn.disabled = false;
+          var L = STRINGS_LANG(), el = byId('cal-sync-status');
+          if (el) {
+            if (res && res.ok) el.textContent = I18n.t(L, 'calSyncOk').replace('%s', calCoverageText(CS.status()));
+            // 失败时 renderCalSyncStatus 会由 onChange 自动显示回落文案，无需额外报错
+          }
+        }).catch(function () { btn.disabled = false; });
+      });
+      var CS = calSync();
+      if (CS) {
+        CS.onChange(renderCalSyncStatus);   // 后台状态变化实时刷新状态行
+        applyCalSyncEnabled();              // 用偏好值初始化引擎开关
+        CS.start();                         // 应用缓存 + 定时静默联网
+      }
+    })();
 
     // Rust-side tray "donate" intent
     Prefs.listen('show-donate', showDonatePanel);
@@ -1152,6 +1206,9 @@
     byId('timer-warn-seconds').value = String(Math.min(300, Math.max(5, Number(state.timerWarnSeconds) || 30)));
     byId('timer-warn-seconds').disabled = state.timerWarnMode === 'silent';
     byId('pref-auto-timesync').checked = !!state.autoTimeSync;
+    // v0.7.3：日历数据自动同步开关 + 状态
+    var cas = byId('pref-cal-autosync'); if (cas) cas.checked = state.calendarAutoSync !== false;
+    renderCalSyncStatus(calSync() ? calSync().status() : null);
     syncTzInfo();
     byId('shutdown-action').value = state.timerAction;
     byId('shutdown-mode').value = state.timerMode;
@@ -1188,6 +1245,8 @@
     }
     if (patch.scale !== undefined) setWindowSize(state.scale);
     if (patch.lang !== undefined) { syncControls(); renderPrivilege(); }
+    // v0.7.3：开关变化即时同步到同步引擎（关闭后立即停止联网）
+    if (patch.calendarAutoSync !== undefined) applyCalSyncEnabled();
     if (patch.style !== undefined && byId('analog-theme-row')) byId('analog-theme-row').hidden = state.style !== 'analog';
     if (opts && opts.rebuild && engine) {
       var now = displayNow();

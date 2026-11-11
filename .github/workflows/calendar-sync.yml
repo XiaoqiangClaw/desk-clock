@@ -1,0 +1,90 @@
+name: Calendar Data Sync
+
+# ① 构建期自动更新（v0.7.3）
+# ---------------------------------------------------------------------------
+# 交易日不是独立数据集，而是「周一~周五 且 非法定节假日」的派生结果；真正会过期
+# 的是国务院的放假 / 调休安排。四种重复规则（工作日/周末/节假日/A股交易日）共用
+# 同一份 ui/calendar-data.{js,json}。
+#
+# chinese_calendar 会在国务院发布次年放假安排后（通常每年 11 月前后）更新数据。
+# 本任务定期把该库升到最新版并重跑 scripts/gen-calendar.py；生成器用「三点探测法」
+# 自动发现库支持到的最新年份并纳入，**无需手改任何年份常量**。仅当产出文件确有
+# 变化时提交回 main，形成「上游政策更新 → 仓库数据自动常新」的闭环。
+#
+# 提交后的数据由两处消费：
+#   - 新安装包：直接打进内置 calendar-data.js（离线兜底）；
+#   - 已安装旧版本：运行时 ui/calendar-sync.js 静默从本仓库 raw 拉取最新 json（②）。
+#
+# 说明：使用 GITHUB_TOKEN 的 push 不会触发其它 workflow，因此不会造成构建循环。
+on:
+  schedule:
+    # 每周一 03:17 UTC（避开整点高峰）；政策数据一年发布一次，每周检查足够及时。
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: calendar-data-sync
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh statutory holiday / trading-day calendar
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node (for generated-file syntax check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install latest chinese_calendar
+        run: python3 -m pip install --upgrade chinese_calendar
+
+      - name: Regenerate calendar data (auto-detected years)
+        run: python3 scripts/gen-calendar.py
+
+      - name: Validate generated files before committing
+        run: |
+          set -euo pipefail
+          node --check ui/calendar-data.js
+          python3 - <<'PY'
+          import json, re
+          js = open('ui/calendar-data.js', encoding='utf-8').read()
+          m = re.search(r'CalendarData = (\{.*\});', js, re.S)
+          assert m, 'calendar-data.js: cannot locate CalendarData assignment'
+          a = json.loads(m.group(1))
+          b = json.load(open('ui/calendar-data.json', encoding='utf-8'))
+          assert a == b, '.js and .json payload differ'
+          assert a.get('schema') == 1, 'unexpected schema'
+          years = sorted(int(y) for y in a['years'])
+          assert len(years) >= 1, 'no years generated'
+          assert years == list(range(years[0], years[-1] + 1)), 'year coverage not contiguous'
+          for y, v in a['years'].items():
+              assert isinstance(v['h'], list) and isinstance(v['w'], list), y
+              assert all(re.fullmatch(r'\d{4}', x) for x in v['h'] + v['w']), y
+          print('validated: coverage', years[0], '-', years[-1], '| years =', len(years))
+          PY
+
+      - name: Commit if changed
+        run: |
+          set -euo pipefail
+          git add ui/calendar-data.js ui/calendar-data.json
+          if git diff --cached --quiet; then
+            echo "calendar data unchanged; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          COVERAGE=$(python3 -c "import json; y=sorted(json.load(open('ui/calendar-data.json'))['years']); print(y[0]+'..'+y[-1])")
+          git commit -m "chore(calendar): sync holiday/trading-day data (${COVERAGE}) [auto]"
+          git push
+          echo "committed refreshed calendar data: ${COVERAGE}"
