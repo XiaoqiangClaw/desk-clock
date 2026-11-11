@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""v0.7.0 release: installer hooks + version consistency structural checks.
+"""v0.7.1 release: installer hooks + version consistency structural checks.
 """
 import json
 import re
@@ -45,9 +45,9 @@ conf = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="u
 nsis = conf.get("bundle", {}).get("windows", {}).get("nsis", {})
 check("bundle.windows.nsis.installerHooks == ./windows/hooks.nsh",
       nsis.get("installerHooks") == "./windows/hooks.nsh", nsis.get("installerHooks"))
-check("tauri.conf.json version is 0.7.0", conf.get("version") == "0.7.0", conf.get("version"))
-check("main window title is Desk Clock v0.7.0",
-      conf["app"]["windows"][0].get("title") == "Desk Clock v0.7.0",
+check("tauri.conf.json version is 0.7.1", conf.get("version") == "0.7.1", conf.get("version"))
+check("main window title is Desk Clock v0.7.1",
+      conf["app"]["windows"][0].get("title") == "Desk Clock v0.7.1",
       conf["app"]["windows"][0].get("title"))
 check("bundle.active/targets/icon unchanged",
       conf["bundle"].get("active") is True
@@ -68,18 +68,18 @@ check("single-instance callback calls app.exit(0)", "app.exit(0)" in cb)
 check("single-instance callback keeps show_main_now fallback", "show_main_now(app)" in cb)
 check("CloseRequested still hides to tray (semantics unchanged)",
       "api.prevent_close();" in lib and "let _ = window.hide();" in lib)
-check("lib.rs native titles all v0.7.0",
-      len(re.findall(r"Desk Clock v0\.7\.0", lib)) == 3
+check("lib.rs native titles all v0.7.1",
+      len(re.findall(r"Desk Clock v0\.7\.1", lib)) == 3
       and "Desk Clock v0.6.3" not in lib,
-      len(re.findall(r"Desk Clock v0\.7\.0", lib)))
+      len(re.findall(r"Desk Clock v0\.7\.1", lib)))
 
 # ===== 4. version consistency (4 places) =====
 cargo = (ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
 appjs = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
-check("Cargo.toml version 0.7.0", 'version = "0.7.0"' in cargo)
-check("ui/app.js APP_VERSION 0.7.0", "var APP_VERSION = '0.7.0';" in appjs)
-check("verify_v04.py version assertion 0.7.0",
-      'version badge shows 0.7.0' in (ROOT / "scripts" / "verify_v04.py").read_text(encoding="utf-8"))
+check("Cargo.toml version 0.7.1", 'version = "0.7.1"' in cargo)
+check("ui/app.js APP_VERSION 0.7.1", "var APP_VERSION = '0.7.1';" in appjs)
+check("verify_v04.py version assertion 0.7.1",
+      'version badge shows 0.7.1' in (ROOT / "scripts" / "verify_v04.py").read_text(encoding="utf-8"))
 check("no stale 0.6.3 in version sources",
       all("0.6.3" not in (ROOT / p).read_text(encoding="utf-8")
           for p in ("src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "scripts/verify_v04.py")))
@@ -87,8 +87,8 @@ check("no stale 0.6.3 in version sources",
 # ===== 5. docs =====
 for name in ("README.md", "CHANGELOG.md", "docs/SPEC.md"):
     p = ROOT / name
-    check("%s exists and mentions v0.7.0" % name,
-          p.exists() and "v0.7.0" in p.read_text(encoding="utf-8"))
+    check("%s exists and mentions v0.7.1" % name,
+          p.exists() and "v0.7.1" in p.read_text(encoding="utf-8"))
 check("no TESTING markdown files", not any((ROOT.glob("TESTING-*.md"))))
 check("no DELIVERY markdown files", not any((ROOT.glob("DELIVERY*.md"))))
 

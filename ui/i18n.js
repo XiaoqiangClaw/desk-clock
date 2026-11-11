@@ -71,6 +71,7 @@
       donateWechat: '微信支付', donateAlipay: '支付宝',
       donateFoot: '感谢您的支持',
       checkUpdate: '检查更新', goDownload: '下载新版本',
+      oneClickUpdate: '一键更新', updateOneClickBusy: '正在打开安装包并退出当前版本…',
       updateChecking: '正在检查…', updateLatest: '已是最新版本 %s',
       updateFound: '发现新版本 %s', updateFail: '检查失败：%s',
       // misc
@@ -179,6 +180,7 @@
       donateWechat: 'WeChat Pay', donateAlipay: 'Alipay',
       donateFoot: 'Thank you for your support',
       checkUpdate: 'Check for updates', goDownload: 'Download update',
+      oneClickUpdate: 'One-click update', updateOneClickBusy: 'Opening installer and exiting current version…',
       updateChecking: 'Checking…', updateLatest: 'You are up to date (%s)',
       updateFound: 'New version available: %s', updateFail: 'Check failed: %s',
       shutdownOff: 'Not set', shutdownAt: 'Shutdown at %s', rebootAt: 'Reboot at %s',

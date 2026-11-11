@@ -16,7 +16,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.7.0';
+  var APP_VERSION = '0.7.1';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -353,12 +353,14 @@
     var L = STRINGS_LANG();
     if (manual) setUpdateStatus(I18n.t(L, 'updateChecking'));
     var dl = byId('download-update'); if (dl) dl.hidden = true;
+    var oc = byId('oneclick-update'); if (oc) oc.hidden = true;
     return Prefs.checkUpdate().then(function (info) {
       var latest = info && info.latest ? String(info.latest).replace(/^v/, '') : '';
       if (!latest) { if (manual) setUpdateStatus(I18n.t(L, 'updateFail').replace('%s', 'no data')); return; }
       if (semverNewer(latest, APP_VERSION)) {
         setUpdateStatus(I18n.t(L, 'updateFound').replace('%s', 'v' + latest));
         if (dl) { dl.hidden = false; dl.dataset.link = 'releases'; }
+        if (oc && info.assetUrl) { oc.hidden = false; oc.dataset.url = info.assetUrl; }
       } else {
         setUpdateStatus(I18n.t(L, 'updateLatest').replace('%s', 'v' + APP_VERSION));
       }
@@ -680,6 +682,19 @@
       });
     })();
     byId('check-update').addEventListener('click', function () { checkUpdate(true); });
+    (function () {
+      var oc = byId('oneclick-update');
+      if (oc) oc.addEventListener('click', function () {
+        var url = this.dataset.url;
+        if (!url) return;
+        setUpdateStatus(I18n.t(STRINGS_LANG(), 'updateOneClickBusy'));
+        // 先打开安装包直链（浏览器开始下载），再退出当前时钟；
+        // 用户运行新安装包时本进程已不在，可避开 NSIS 旧的「关闭正在运行的工具」卡死。
+        Prefs.openUpdateInstaller(url)
+          .then(function () { return Prefs.quitApp(); })
+          .catch(function () { Prefs.quitApp().catch(function () {}); });
+      });
+    })();
     (function () {
       var dl = byId('download-update');
       if (dl) dl.addEventListener('click', function (e) {

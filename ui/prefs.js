@@ -562,14 +562,41 @@
   // 外链：前端只传标识符，Rust 解析真实地址（不接受任意 URL）。
   function openUrl(kind) { return invoke('open_link', { kind: kind }); }
   // 更新检查：GitHub REST API 允许跨域，前端直接 fetch；Rust 不引入 TLS 依赖。
+  // 返回 { latest, assetUrl }：assetUrl 是当前平台对应的新版本安装包直链（用于一键更新）。
   function checkUpdate() {
     try {
       return fetch('https://api.github.com/repos/xiaoqiangclub/desk-clock/releases/latest',
         { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'DeskClock' } })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function (d) { return { latest: d && d.tag_name ? String(d.tag_name) : '' }; });
+        .then(function (d) {
+          var tag = d && d.tag_name ? String(d.tag_name) : '';
+          var assetUrl = pickAssetUrl(d && d.assets);
+          return { latest: tag, assetUrl: assetUrl || '' };
+        });
     } catch (e) { return Promise.reject(e); }
   }
+  // 从 release assets 里挑出当前平台的安装包直链
+  function pickAssetUrl(assets) {
+    if (!assets || !assets.length) return '';
+    var plat = String(navigator.platform || '').toLowerCase();
+    var ua = String(navigator.userAgent || '').toLowerCase();
+    var isWin = /win/.test(plat) || /windows/.test(ua);
+    var isMac = /mac/.test(plat);
+    function first(suffix) {
+      suffix = suffix.toLowerCase();
+      for (var i = 0; i < assets.length; i++) {
+        if (String(assets[i].name || '').toLowerCase().indexOf(suffix) >= 0) {
+          return assets[i].browser_download_url || '';
+        }
+      }
+      return '';
+    }
+    if (isWin) return first('.exe');
+    if (isMac) return first('.dmg') || first('.app.tar.gz');
+    return first('.appimage') || first('.deb') || first('.rpm'); // Linux
+  }
+  // 一键更新：打开新版本安装包直链（Rust 仅放行本项目 release 直链）
+  function openUpdateInstaller(url) { return invoke('open_update_installer', { url: url }); }
   function addClockWindow(id, label, offset, style, showSeconds, visible) {
     return invoke('add_clock_window', {
       id: id, label: label, offset: offset,
@@ -617,6 +644,7 @@
     setClickThrough: setClickThrough,
     syncSystemTime: syncSystemTime,
     checkUpdate: checkUpdate,
+    openUpdateInstaller: openUpdateInstaller,
     openUrl: openUrl,
     addClockWindow: addClockWindow,
     closeClockWindow: closeClockWindow,

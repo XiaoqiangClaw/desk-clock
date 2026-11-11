@@ -583,7 +583,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock v0.7.0 · 设置")
+    .title("Desk Clock v0.7.1 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -698,7 +698,7 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock v0.7.0 · {}", label))
+    .title(format!("Desk Clock v0.7.1 · {}", label))
     // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
     .inner_size(
         cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
@@ -1174,13 +1174,9 @@ fn preset_position_for(
 
 /// The frontend passes an IDENTIFIER, never a raw URL: Rust resolves the
 /// actual address, so no window can make the app open an arbitrary target.
-#[tauri::command]
-fn open_link(kind: String) -> Result<(), String> {
-    let url = match kind.as_str() {
-        "project" => "https://github.com/xiaoqiangclub/desk-clock",
-        "releases" => "https://github.com/xiaoqiangclub/desk-clock/releases/latest",
-        _ => return Err("unknown link".into()),
-    };
+/// 用系统默认方式打开一个 URL（项目页 / Releases / 更新安装包直链）。
+/// 不走 Tauri shell 插件，直接用平台原生命令；调用方需自行保证 url 可信。
+fn shell_open(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut cmd = {
         let mut c = Command::new("rundll32");
@@ -1207,6 +1203,27 @@ fn open_link(kind: String) -> Result<(), String> {
     };
     cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn open_link(kind: String) -> Result<(), String> {
+    let url = match kind.as_str() {
+        "project" => "https://github.com/xiaoqiangclub/desk-clock",
+        "releases" => "https://github.com/xiaoqiangclub/desk-clock/releases/latest",
+        _ => return Err("unknown link".into()),
+    };
+    shell_open(url)
+}
+
+/// 一键更新：打开「当前平台对应的新版本安装包」直链。
+/// URL 必须由前端从本项目 Releases 资源列表中取出；这里只放行本项目 release 直链，避免任意 URL 打开。
+#[tauri::command]
+fn open_update_installer(url: String) -> Result<(), String> {
+    let prefix = "https://github.com/xiaoqiangclub/desk-clock/releases/download/";
+    if !url.starts_with(prefix) {
+        return Err("invalid update asset url".into());
+    }
+    shell_open(&url)
 }
 
 // ------------------------------------------------------------- system time
@@ -1498,7 +1515,7 @@ fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> 
         "alert",
         WebviewUrl::App(PathBuf::from("alert.html")),
     )
-    .title("Desk Clock v0.7.0 · 提醒")
+    .title("Desk Clock v0.7.1 · 提醒")
     .inner_size(360.0, 220.0)
     .resizable(false)
     .decorations(false)
@@ -1779,6 +1796,7 @@ pub fn run() {
             set_window_geometry,
             preset_position_for,
             open_link,
+            open_update_installer,
             sync_system_time,
             schedule_timer,
             cancel_timer,

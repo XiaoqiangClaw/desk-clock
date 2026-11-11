@@ -5,9 +5,9 @@
 
 🪟 Windows　·　🍎 macOS　·　🐧 Linux　｜　🌐 简体中文 / English　｜　🪶 零依赖 · 低占用　｜　📦 三端原生安装包　｜　💖 MIT 开源免费
 
-一个**开源免费**的桌面时钟：**8 种社区流行样式**，无边框透明窗口，低资源占用，支持**任意多个窗口、且每个窗口都有全套独立设置**（样式、颜色、字体、大小、时区、位置、鼠标穿透等），以及 🔔 闹钟、⏲️ 定时关机/重启、🛰️ 系统校时、🚀 开机自启和 🔊 **整点语音播报**。一套静态前端 + 一个 Tauri v2 Rust 壳，跨 **Windows / macOS / Linux**。
+一个**开源免费**的桌面时钟：**8 种社区流行样式**，无边框透明窗口，低资源占用，支持**任意多个窗口、且每个窗口都有全套独立设置**（样式、颜色、字体、大小、时区、位置、鼠标穿透等），以及 🔔 闹钟、⏲️ 定时关机/重启、🛰️ 系统校时、🚀 开机自启、🔊 **整点语音播报**和 🆕 **一键更新**。一套静态前端 + 一个 Tauri v2 Rust 壳，跨 **Windows / macOS / Linux**。
 
-> 协议 [MIT](LICENSE) ｜ 界面**默认简体中文，支持中英双语切换** ｜ 当前版本 **v0.7.0**，安装包由公共仓库的 GitHub Actions 自动打包全平台。
+> 协议 [MIT](LICENSE) ｜ 界面**默认简体中文，支持中英双语切换** ｜ 当前版本 **v0.7.1**，安装包由公共仓库的 GitHub Actions 自动打包全平台。
 > 版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## ✨ 一眼看懂
@@ -100,6 +100,7 @@
 | v0.6.2 | 九宫格按可见内容贴边（窗口外壳=内容尺寸）、校时页显示当前窗口时区、版本号进窗口标题、头部「正在编辑」紧邻蓝点；闹钟/定时提醒改为屏幕居中弹窗（按钮可点）、响铃时长可设、定时任务提前提醒/静默/终止 |
 | v0.6.3 | 修复 NSIS 安装/更新时「自动关闭运行中的工具」失败：`installerHooks` 经单实例通道请求旧实例优雅退出，最多等 3 秒后强制结束兜底；普通关窗仍隐藏到托盘 |
 | **v0.7.0** | 🔊 新增**语音播报**（可选声音与规则、中英文、免打扰、默认关闭）；🚀 修复 **Windows 开机自启不生效**（改为官方 Builder 链注册 autostart 插件、写入后回读校验、补齐 capability、前端如实反馈失败） |
+| **v0.7.1** | 🆕 新增**一键更新**（自动选对平台安装包直链，点击后先打开安装包并退出当前时钟，避开旧版 NSIS「关闭正在运行的工具」卡死）；🛠️ 修复 **NSIS 更新卡死**：`hooks.nsh` 改用不限用户/完整性级别的 `FindProcess`/`KillProcess`，不再因权限级别不同误判「无进程」而中止卸载 |
 
 > 版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -115,7 +116,7 @@
 
 ## 📥 下载安装包
 
-到 **[Releases](https://github.com/xiaoqiangclub/desk-clock/releases)** 下载对应平台（当前 **v0.7.0**）：
+到 **[Releases](https://github.com/xiaoqiangclub/desk-clock/releases)** 下载对应平台（当前 **v0.7.1**）：
 
 | 平台 | 文件 | 安装 |
 |---|---|---|
@@ -159,9 +160,9 @@ python3 scripts/verify_v05.py       # 55 项 v0.5 功能检查
 python3 scripts/verify_v06.py       # 22 项每窗口独立配置检查
 python3 scripts/verify_v061.py      # 30 项 v0.6.1 功能与位置独立性检查
 python3 scripts/verify_v062.py      # 34 项 v0.6.2 功能检查（贴边/标题/头部/弹窗/响铃/提醒）
-python3 scripts/verify_v063.py      # 31 项 v0.7.0 版本一致性 + 安装钩子结构检查（纯文件，无需 Chromium）
+python3 scripts/verify_v063.py      # 33 项 v0.7.1 版本一致性 + 安装钩子结构检查（纯文件，无需 Chromium）
 python3 scripts/verify_announce.py  # 77 项语音播报验收（真实 Chromium + TTS mock）
-# 合计 418 项；需 playwright + chromium
+# 合计 420 项；需 playwright + chromium
 ```
 
 装成桌面程序，前置（各系统一次）：
@@ -197,7 +198,8 @@ bash scripts/build.sh     # 出安装包（产物在 src-tauri/target/release/bu
 - [x] **NSIS 安装/更新时可自动关闭运行中的工具**（v0.6.3）：`installerHooks` 经单实例通道请求优雅退出、等约 3 秒后强制结束兜底；普通点 × 仍只隐藏到托盘
 - [x] 🔊 **语音播报**（v0.7.0）：可选声音与规则、中英文报时、免打扰、默认关闭，无语音引擎时优雅降级为提示音
 - [x] 🚀 **Windows 开机自启修复**（v0.7.0）：autostart 插件改为官方 Builder 链注册、写入后回读校验、capability 授权、前端如实反馈失败
-- [x] 自动化检查：31 + 43 + 35 + 60 + 55 + 22 + 30 + 34 + 31 + 77 = **418 项通过**
+- [x] 🆕 **一键更新**（v0.7.1）：自动选对平台安装包直链、点击后先打开安装包并退出当前时钟，避开旧版 NSIS「关闭正在运行的工具」卡死；`hooks.nsh` 改用不限用户/完整性级别的 `FindProcess`/`KillProcess` 修复更新卡死
+- [x] 自动化检查：31 + 43 + 35 + 60 + 55 + 22 + 30 + 34 + 33 + 77 = **420 项通过**
 - [x] **Linux / Windows / macOS 全平台安装包**由 GitHub Actions 自动构建并发布 Release
 
 ## 💖 开源
