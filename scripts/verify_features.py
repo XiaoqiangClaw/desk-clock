@@ -167,7 +167,7 @@ with sync_playwright() as pw:
     page.wait_for_timeout(300)
     check("Alt+R restores defaults", prefs(page).get("color") == "" and prefs(page).get("style") == "flip")
 
-    # ---------- alarms ----------
+    # ---------- alarms / repeat rules ----------
     boot(page, {"lang": "zh-CN"})
     open_settings(page)
     check("alarm hour/minute selects are locale-independent",
@@ -175,15 +175,80 @@ with sync_playwright() as pw:
           and page.locator("#alarm-minute option").count() == 60)
     page.locator("#alarm-hour").select_option("07")
     page.locator("#alarm-minute").select_option("30")
-    page.locator("#alarm-repeat").check()
+    page.locator("#alarm-repeat-mode").select_option("daily")   # 默认每天
     page.locator("#alarm-add").click()
     page.wait_for_timeout(250)
-    check("alarm added + persisted", len(prefs(page).get("alarms", [])) == 1
-          and prefs(page)["alarms"][0]["time"] == "07:30", prefs(page).get("alarms"))
+    check("alarm added + persisted (daily rule)",
+          len(prefs(page).get("alarms", [])) == 1
+          and prefs(page)["alarms"][0]["time"] == "07:30"
+          and prefs(page)["alarms"][0].get("repeat") is True
+          and prefs(page)["alarms"][0].get("rule", {}).get("mode") == "daily",
+          prefs(page).get("alarms"))
     check("alarm row visible", page.locator("#alarm-list .alarm-row").count() == 1)
     page.locator("#alarm-list .alarm-row button").click()
     page.wait_for_timeout(200)
     check("alarm removable", len(prefs(page).get("alarms", [])) == 0)
+
+    # 重复规则引擎（DeskClock.Schedule）按真实日历判定
+    sched = page.evaluate("""() => {
+      const S = window.DeskClock.Schedule;
+      const d = (y,m,day) => new Date(y, m-1, day);
+      return {
+        hl_0101: S.matches({mode:'holidays'}, d(2026,1,1)),   // 元旦(周四)=法定节假日
+        wd_0214: S.matches({mode:'workdays'}, d(2026,2,14)),  // 春节调休补班(周六)=工作日
+        we_0214: S.matches({mode:'weekends'}, d(2026,2,14)),  // 同上=非周末
+        wd_0309: S.matches({mode:'workdays'}, d(2026,3,9)),   // 普通周一=工作日
+        tr_0309: S.matches({mode:'trading'}, d(2026,3,9)),    // 普通周一=A股交易日
+        we_0307: S.matches({mode:'weekends'}, d(2026,3,7)),   // 普通周六=周末
+        tr_0307: S.matches({mode:'trading'}, d(2026,3,7)),    // 普通周六=非交易日
+        cu_mon: S.matches({mode:'custom', weekdays:[1]}, d(2026,3,9)),  // 自定义周一
+        cu_tue: S.matches({mode:'custom', weekdays:[1]}, d(2026,3,10)), // 自定义周一≠周二
+        cov: S.covered(2026) && !S.covered(2035)
+      };
+    }""")
+    check("holiday mode matches 元旦", sched["hl_0101"] is True)
+    check("workdays mode matches 调休补班周六", sched["wd_0214"] is True)
+    check("weekends mode excludes 调休补班周六", sched["we_0214"] is False)
+    check("workdays mode matches 普通周一", sched["wd_0309"] is True)
+    check("trading mode matches 普通周一", sched["tr_0309"] is True)
+    check("weekends mode matches 普通周六", sched["we_0307"] is True)
+    check("trading mode excludes 普通周六", sched["tr_0307"] is False)
+    check("custom weekday matches 周一", sched["cu_mon"] is True)
+    check("custom weekday excludes 周二", sched["cu_tue"] is False)
+    check("calendar coverage 2026 yes / 2035 no", sched["cov"] is True)
+
+    # 自定义模式 UI：周几多选 + 添加
+    page.locator("#alarm-repeat-mode").select_option("custom")
+    page.wait_for_timeout(60)
+    check("custom panel visible", page.locator("#alarm-custom").is_visible())
+    page.locator('#alarm-weekdays .alarm-wd[data-wd="1"]').click()  # 周一
+    page.locator('#alarm-weekdays .alarm-wd[data-wd="3"]').click()  # 周三
+    page.locator("#alarm-hour").select_option("08")
+    page.locator("#alarm-minute").select_option("15")
+    page.locator("#alarm-add").click()
+    page.wait_for_timeout(200)
+    check("custom alarm added with weekdays",
+          len(prefs(page).get("alarms", [])) == 1
+          and prefs(page)["alarms"][0]["rule"]["mode"] == "custom"
+          and sorted(prefs(page)["alarms"][0]["rule"]["weekdays"]) == [1, 3],
+          prefs(page).get("alarms"))
+    page.locator("#alarm-list .alarm-row button").click()
+    page.wait_for_timeout(150)
+    check("custom alarm removed", len(prefs(page).get("alarms", [])) == 0)
+
+    # 一次性（旧 repeat:false）仍消费
+    now = page.evaluate("() => { const d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }")
+    set_prefs(page, {"lang": "zh-CN", "alarms": [{"id": "test1", "time": now, "repeat": False}]})
+    page.reload()
+    page.wait_for_timeout(1600)
+    check("alarm toast fires on matching minute", page.locator("#alarm-toast").is_visible())
+    check("one-shot alarm consumed after firing", len(prefs(page).get("alarms", [])) == 0,
+          prefs(page).get("alarms"))
+    page.locator("#alarm-snooze").click()
+    page.wait_for_timeout(200)
+    check("snooze adds +5min alarm", len(prefs(page).get("alarms", [])) == 1
+          and prefs(page)["alarms"][0]["repeat"] is False, prefs(page).get("alarms"))
+    check("toast dismissed", page.locator("#alarm-toast").is_hidden())
 
     now = page.evaluate("() => { const d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }")
     set_prefs(page, {"lang": "zh-CN", "alarms": [{"id": "test1", "time": now, "repeat": False}]})

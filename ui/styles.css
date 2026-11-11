@@ -335,6 +335,20 @@ button.perm-btn { width: 100%; margin-top: 6px; }
 .alarm-row .alarm-del:hover { background: rgba(255,107,107,.18); color: #ffbdbd; }
 .alarm-empty { color: var(--s-dim); font-size: 11px; text-align: center; padding: 6px; }
 
+/* v0.7.2：重复规则编辑器（模式选择 + 自定义） */
+.alarm-repeat-row .dc-select { flex: 1 1 auto; min-width: 0; }
+.alarm-custom { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--s-line); }
+.alarm-weekdays { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.alarm-wd { width: 30px; height: 30px; padding: 0; border-radius: 8px; border: 1px solid var(--s-line); background: rgba(255,255,255,.03); color: var(--s-text); font-size: 12px; cursor: pointer; }
+.alarm-wd:hover { border-color: var(--s-accent); }
+.alarm-wd.on { background: var(--s-accent); border-color: var(--s-accent); color: #0c0e13; font-weight: 600; }
+.alarm-dates-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.alarm-dates-row .dc-input[type=date] { flex: 1 1 auto; min-width: 0; }
+.alarm-dates { display: flex; flex-wrap: wrap; gap: 6px; }
+.alarm-date-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--s-text); background: rgba(255,255,255,.06); padding: 2px 4px 2px 8px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+.alarm-date-x { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--s-dim); font-size: 12px; line-height: 1; cursor: pointer; }
+.alarm-date-x:hover { background: rgba(255,107,107,.18); color: #ffbdbd; }
+
 /* 多时区窗口管理器 */
 .cm-editor { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .cm-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }

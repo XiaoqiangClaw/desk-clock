@@ -33,11 +33,14 @@ jobs:
       - name: Static checks
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/verify.py scripts/verify_features.py scripts/verify_v03.py scripts/verify_v04.py scripts/verify_v05.py scripts/verify_v06.py scripts/verify_v061.py
+          python3 -m py_compile scripts/verify.py scripts/verify_features.py scripts/verify_v03.py scripts/verify_v04.py scripts/verify_v05.py scripts/verify_v06.py scripts/verify_v061.py scripts/gen-calendar.py
           bash -n scripts/dev.sh scripts/build.sh scripts/preview.sh
           node --check ui/app.js
           node --check ui/prefs.js
           node --check ui/alarm.js
+          node --check ui/announce.js
+          node --check ui/schedule.js
+          node --check ui/calendar-data.js
           node --check ui/clock.js
           node --check ui/i18n.js
           node --check ui/flip.js

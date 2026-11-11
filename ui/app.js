@@ -16,7 +16,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.7.1';
+  var APP_VERSION = '0.7.2';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -670,8 +670,10 @@
     })();
 
     // Project link + update check
+    // 「项目与更新」卡里的链接：指向最新发布页（releases/latest，直接带下载），更贴合「更新」语义；
+    // 版本徽标仍保留为仓库主页入口（见下方 ver-badge/about-version）。
     byId('project-link').addEventListener('click', function () {
-      Prefs.openUrl(PROJECT_URL).catch(function () { /* browser preview: no-op */ });
+      Prefs.openUrl(RELEASES_URL).catch(function () { /* browser preview: no-op */ });
     });
     // v0.5：版本号徽标可直接点击跳转到项目主页
     (function () {
@@ -911,7 +913,12 @@
     // 闹钟按本机时间触发（额外时区窗口不触发）
     var local = new Date();
     var hm = ('0' + local.getHours()).slice(-2) + ':' + ('0' + local.getMinutes()).slice(-2);
-    var hits = (state.alarms || []).filter(function (a) { return a.time === hm; });
+    var Sched = window.DeskClock.Schedule;
+    var hits = (state.alarms || []).filter(function (a) {
+      if (a.time !== hm) return false;
+      if (a.repeat === false) return true;            // 一次性：到点即响
+      return Sched ? Sched.matches(a.rule, local) : true;
+    });
     if (!hits.length) { lastAlarmKey = ''; return; }
     var key = hm + '|' + local.toDateString() + '|' + hits.map(function (a) { return a.id; }).join(',');
     if (key === lastAlarmKey) return;
@@ -1072,8 +1079,10 @@
       var info = document.createElement('span');
       info.className = 'alarm-info';
       var t = document.createElement('span'); t.className = 'alarm-time-text'; t.textContent = a.time;
-      var tag = document.createElement('span'); tag.className = 'alarm-tag'; tag.textContent = I18n.t(L, 'alarmRepeat');
-      info.appendChild(t); if (a.repeat) info.appendChild(tag);
+      var tag = document.createElement('span'); tag.className = 'alarm-tag';
+      var tagText = a.repeat ? (window.DeskClock.Schedule ? DeskClock.Schedule.summary(a.rule, L) : I18n.t(L, 'repDaily')) : I18n.t(L, 'repOnce');
+      tag.textContent = tagText;
+      info.appendChild(t); info.appendChild(tag);
       var btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'alarm-del'; btn.textContent = '×'; btn.title = I18n.t(L, 'alarmRemove');
       btn.addEventListener('click', function () {
@@ -1353,19 +1362,79 @@
       cb.addEventListener('change', function (e) { changed({ analogPenetrate: e.target.checked }); });
     })();
 
-    // Alarms — explicit hour/minute selects (locale-independent)
+    // 闹钟重复规则编辑器（v0.7.2）：模式选择 + 自定义（周几 / 指定日期 / 排除节假日）
+    var alarmCustomWeekdays = [];
+    var alarmCustomDates = [];
     (function () {
       var h = byId('alarm-hour'), m = byId('alarm-minute'), i, o;
       for (i = 0; i < 24; i++) { o = document.createElement('option'); o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2); h.appendChild(o); }
       for (i = 0; i < 60; i++) { o = document.createElement('option'); o.value = ('0' + i).slice(-2); o.textContent = ('0' + i).slice(-2); m.appendChild(o); }
       h.value = '07'; m.value = '30';
     })();
+    byId('alarm-repeat-mode').addEventListener('change', function () {
+      byId('alarm-custom').hidden = byId('alarm-repeat-mode').value !== 'custom';
+    });
+    (function buildWeekdayChips() {
+      var box = byId('alarm-weekdays'); if (!box) return;
+      [1, 2, 3, 4, 5, 6, 0].forEach(function (wd) {   // 一二三四五六日
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'alarm-wd'; b.setAttribute('data-wd', String(wd));
+        b.textContent = I18n.t(STRINGS_LANG(), 'wd' + wd);
+        b.addEventListener('click', function () {
+          var idx = alarmCustomWeekdays.indexOf(wd);
+          if (idx >= 0) { alarmCustomWeekdays.splice(idx, 1); b.classList.remove('on'); }
+          else { alarmCustomWeekdays.push(wd); b.classList.add('on'); }
+        });
+        box.appendChild(b);
+      });
+    })();
+    function renderCustomDates() {
+      var box = byId('alarm-dates'); if (!box) return;
+      box.textContent = '';
+      alarmCustomDates.forEach(function (d) {
+        var chip = document.createElement('span'); chip.className = 'alarm-date-chip';
+        chip.textContent = d;
+        var x = document.createElement('button'); x.type = 'button'; x.className = 'alarm-date-x';
+        x.textContent = '×'; x.title = I18n.t(STRINGS_LANG(), 'alarmRemove');
+        x.addEventListener('click', function () {
+          alarmCustomDates = alarmCustomDates.filter(function (s) { return s !== d; });
+          renderCustomDates();
+        });
+        chip.appendChild(x); box.appendChild(chip);
+      });
+    }
+    byId('alarm-date-add').addEventListener('click', function () {
+      var v = byId('alarm-date').value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+      if (alarmCustomDates.indexOf(v) < 0) alarmCustomDates.push(v);
+      byId('alarm-date').value = '';
+      renderCustomDates();
+    });
+    function resetAlarmCustom() {
+      alarmCustomWeekdays = [];
+      alarmCustomDates = [];
+      var box = byId('alarm-weekdays');
+      if (box) Array.prototype.forEach.call(box.querySelectorAll('.alarm-wd.on'), function (b) { b.classList.remove('on'); });
+      var sk = byId('alarm-skip-holidays'); if (sk) sk.checked = false;
+      byId('alarm-custom').hidden = true;
+      byId('alarm-repeat-mode').value = 'daily';
+      renderCustomDates();
+    }
     byId('alarm-add').addEventListener('click', function () {
       var v = byId('alarm-hour').value + ':' + byId('alarm-minute').value;
       if (!/^\d{2}:\d{2}$/.test(v)) return;
+      var mode = byId('alarm-repeat-mode').value;
+      var rule = { mode: mode };
+      if (mode === 'custom') {
+        rule.weekdays = alarmCustomWeekdays.slice().sort(function (a, b) { return a - b; });
+        rule.dates = alarmCustomDates.slice();
+        rule.skipHolidays = byId('alarm-skip-holidays').checked;
+      }
       var list = (state.alarms || []).slice();
-      list.push({ id: Alarm.newId(), time: v, repeat: byId('alarm-repeat').checked });
+      list.push({ id: Alarm.newId(), time: v, repeat: true, rule: rule });
       changed({ alarms: list });
+      renderAlarmList();
+      resetAlarmCustom();
     });
     byId('alarm-toast-close').addEventListener('click', hideAlarmToast);
     byId('alarm-dismiss').addEventListener('click', hideAlarmToast);

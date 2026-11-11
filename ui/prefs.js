@@ -136,12 +136,16 @@
     if (TONES.indexOf(obj.alarmTone) >= 0) out.alarmTone = obj.alarmTone;
     if (Array.isArray(obj.alarms)) {
       out.alarms = obj.alarms.filter(function (a) {
-        return a && typeof a.time === 'string' && /^\d{2}:\d{2}$/.test(a.time);
+        return a && typeof a.time === 'string' && /^[0-9]{2}:[0-9]{2}$/.test(a.time);
       }).slice(0, 20).map(function (a) {
+        var rule = (window.DeskClock && window.DeskClock.Schedule)
+          ? window.DeskClock.Schedule.fromLegacy(a.repeat, a.rule)
+          : { mode: a.repeat === false ? 'once' : 'daily' };
         return {
           id: String(a.id || ('a' + Math.random().toString(36).slice(2, 9))),
           time: a.time,
-          repeat: !!a.repeat
+          repeat: !!a.repeat,
+          rule: rule
         };
       });
     }

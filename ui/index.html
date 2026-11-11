@@ -215,15 +215,31 @@
             </label>
             <div class="field-note" data-i18n="alarmRingSecondsNote">到点后响铃到设定时长自动停止；也可随时手动静音或终止。</div>
 
-            <div class="alarm-editor">
+      <div class="alarm-editor">
               <div class="alarm-time">
                 <select id="alarm-hour" class="dc-select" aria-label="小时"></select>
                 <span class="alarm-colon">:</span>
                 <select id="alarm-minute" class="dc-select" aria-label="分钟"></select>
               </div>
               <div class="alarm-repeat-row">
-                <label class="inline"><input id="alarm-repeat" type="checkbox" class="dc-switch"><span data-i18n="alarmRepeat">每天重复</span></label>
+                <select id="alarm-repeat-mode" class="dc-select" aria-label="重复">
+                  <option value="daily" data-i18n="repDaily">每天</option>
+                  <option value="workdays" data-i18n="repWorkdays">工作日</option>
+                  <option value="weekends" data-i18n="repWeekends">周末</option>
+                  <option value="holidays" data-i18n="repHolidays">法定节假日</option>
+                  <option value="trading" data-i18n="repTrading">A股交易日</option>
+                  <option value="custom" data-i18n="repCustom">自定义</option>
+                </select>
                 <button id="alarm-add" class="dc-btn tiny" type="button" data-i18n="alarmAdd">＋ 添加</button>
+              </div>
+              <div id="alarm-custom" class="alarm-custom" hidden>
+                <div class="alarm-weekdays" id="alarm-weekdays"></div>
+                <label class="inline"><input id="alarm-skip-holidays" type="checkbox" class="dc-switch"><span data-i18n="repSkipHolidays">排除法定节假日</span></label>
+                <div class="alarm-dates-row">
+                  <input id="alarm-date" type="date" class="dc-input" aria-label="指定日期">
+                  <button id="alarm-date-add" class="dc-btn tiny ghost" type="button" data-i18n="repAddDate">添加日期</button>
+                </div>
+                <div id="alarm-dates" class="alarm-dates"></div>
               </div>
             </div>
             <div id="alarm-list" class="alarm-list"></div>
@@ -405,7 +421,7 @@
 
           <div class="card">
             <div class="card-title" data-i18n="grpProject">项目与更新</div>
-            <button id="project-link" class="dc-btn link" type="button">↗ GitHub · xiaoqiangclub/desk-clock</button>
+            <button id="project-link" class="dc-btn link" type="button" title="查看最新版本（下载）">↗ GitHub · xiaoqiangclub/desk-clock</button>
             <div class="update-row">
               <button id="check-update" class="dc-btn tiny" type="button" data-i18n="checkUpdate">检查更新</button>
               <button id="oneclick-update" class="dc-btn tiny primary" hidden data-i18n="oneClickUpdate">一键更新</button>
@@ -449,6 +465,8 @@
 <script src="announce.js"></script>
 <script src="flip.js"></script>
 <script src="clock.js"></script>
+<script src="calendar-data.js"></script>
+<script src="schedule.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

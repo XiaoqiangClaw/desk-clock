@@ -1,7 +1,7 @@
 # Desk Clock — 设计契约
 
 > 本文是模块接口、样式与配置模型的技术说明。
-> 当前版本 **v0.7.1**，功能与行为以根目录 `README.md` 和 `CHANGELOG.md` 为准。
+> 当前版本 **v0.7.2**，功能与行为以根目录 `README.md` 和 `CHANGELOG.md` 为准。
 
 开源桌面时钟：只显示时间，可选是否显示秒，8 种样式，无边框透明、低资源、跨 Windows / macOS / Linux；
 同一进程可开任意多个时钟窗口，**每个窗口都有全套独立配置**。
@@ -91,6 +91,14 @@
   （显示秒→下一个整秒；不显示秒→下一个整分），`setTimeout` 单次唤醒，并做 ±20ms 对齐补偿。
   `document.visibilitychange` 隐藏时 `stop()`、可见时 `start()`；原生 `hide()` 另有 Rust 定向事件停/复表。
 - `hour12=true` 时小时按 12 小时制（不额外显示 AM/PM，保持「仅显示时间」）。
+
+### `ui/schedule.js` → `DeskClock.Schedule`（v0.7.2）
+- 闹钟重复规则引擎 + 中国大陆法定日历判定。零运行时依赖、可离线、纯函数便于无头回归；顶层零副作用。
+- 数据来自 `ui/calendar-data.js`（`DeskClock.CalendarData`）：`years[YYYY] = { h:[MMdd...], w:[MMdd...] }`，`h`=法定节假日停休日（仅周几停休，不含普通周末）、`w`=调休补班日（周末上班）。由 `scripts/gen-calendar.py` 从 `chinese_calendar` 生成，覆盖 2024–2027。
+- 派生口径：**工作日** = 周一~周五且不在 `h`，或在 `w`；**周末** = 周六/日且不在 `w`；**节假日** = 在 `h`；**A股交易日** = 周一~周五且不在 `h`（周末含调休补班一律休市）。数据未覆盖年份退化为周一~周五口径。
+- 接口：`isWorkday/isWeekend/isHoliday/isTradingDay(Date)`、`covered(year)`、`normalizeRule(rule)`、`fromLegacy(repeat, rule)`、`matches(rule, date)`、`summary(rule, lang)`、`MODES`（`daily|workdays|weekends|holidays|trading|custom`）。
+- `rule = { mode, weekdays:[0-6], dates:['YYYY-MM-DD'], skipHolidays }`；`dates` 显式命中一律响铃；`custom` 按 `weekdays` 命中，可选 `skipHolidays` 排除法定节假日。
+- 兼容：`DeskClock.Prefs.normalize()` 把每条闹钟规整为 `{ id, time, repeat, rule }`；旧 `repeat:true`→`daily`、`false`→`once`（一次性，响后移除）。触发在 `ui/app.js` 的 `maybeFireAlarms()`：一次性到点即响，重复闹钟按 `Schedule.matches(rule, localDate)` 判定。
 
 ### `ui/announce.js` → `DeskClock.Announce`（v0.7，未发布）
 - 语音播报（纯 Web Speech API + 复用 `Alarm` 合成提示音，零新依赖）；顶层零副作用，`speechSynthesis` 全部 try/catch 保护，无语音引擎时优雅降级（仅播提示音）。
