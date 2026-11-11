@@ -32,6 +32,32 @@ jobs:
         with:
           node-version: lts/*
 
+      # v0.7.4 发版纪律：每个版本都把「当前最新」的日历数据直接打进安装包。
+      # 此时升级 chinese_calendar 到最新版并重跑生成器（自动探测新年份），
+      # 因此即使距离上次数据提交已过去很久，本版内置数据也一定是发版时刻最新的。
+      - name: Setup Python (for fresh built-in calendar data)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Refresh built-in calendar data to latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade chinese_calendar
+          python scripts/gen-calendar.py
+          node --check ui/calendar-data.js
+          python - <<'PY'
+          import json, re
+          js = open('ui/calendar-data.js', encoding='utf-8').read()
+          a = json.loads(re.search(r'CalendarData = (\{.*\});', js, re.S).group(1))
+          b = json.load(open('ui/calendar-data.json', encoding='utf-8'))
+          assert a == b, '.js and .json must be identical'
+          ys = sorted(int(y) for y in a['years'])
+          assert ys == list(range(ys[0], ys[-1] + 1)), 'coverage must be contiguous'
+          print('fresh built-in calendar coverage:', a['coverage'])
+          PY
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -78,23 +104,33 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Desk Clock ${{ github.ref_name }} 🕐"
           releaseBody: |
-            ## 🕐 Desk Clock v0.7.3
+            ## 🕐 Desk Clock v0.7.4
 
             好看、好用、还跨平台的开源桌面时钟 —— 透明悬浮在壁纸之上，无边框、无黑底。
-            本次让**日历数据（含 A股交易日）自动更新**：已安装的旧版本无需重装/升级，也能自动拿到未来年份的正确日历。
+            本次把日历数据同步从「按时间盲轮询」升级为**覆盖驱动**，并做到**每个版本都内置当前最新的日历数据**。
 
-            ### 🔄 新增 · 日历数据自动更新（构建期 + 运行时双层闭环）
+            ### 🎯 改进 · 覆盖驱动：平时零联网，临期才更新
 
-            **先澄清一个概念**：A股交易日不是独立数据集，而是「周一~周五 且 非法定节假日」的**派生结果**；工作日 / 周末 / 法定节假日 / 交易日 四种重复规则共用同一份国务院放假 + 调休数据。真正会过期的是这份政策数据，它一更新，四种规则同时自动更新。它只能「自动跟随权威数据源」，无法凭空算出未来年份。
+            日历数据按年整块覆盖（国务院每年 11 月上旬发次年放假安排），所以不需要反复检查：
 
-            - **① 构建期自动**：新增定时任务每周把 `chinese_calendar` 升到最新版并重跑生成器；生成器改为**自动探测库支持到的最新年份**并纳入，不再写死 2024–2027。国务院发布 2028 放假安排、上游升级后，仓库数据自动补齐 2028，无需手改年份常量。
-            - **② 运行时静默同步**：已安装 v0.7.2 及更早版本的用户**不用重装**，启动后静默从本仓库拉取最新日历并热更新，四种规则（含交易日）即时生效。严格校验 + **只增不减防回退** + 离线/失败/超时一律无感回落到内置表，内置数据永远兜底。零新依赖、零新权限，数据源自托管、非第三方 API。
-            - **可开关、默认开启**：设置 →「关于」页新增「📅 日历数据」卡片，显示当前覆盖年份与来源，可关闭自动更新（关闭后完全不联网）、可「立即检查」。默认开启——数据同步是静默、失败无感的正确性保障，与「会发声打扰、默认关闭」的语音播报性质不同。
-            - **跨窗口一致**：同步结果同源共享，其它已打开窗口实时跟上。
+            - **覆盖内 → 纯本地、零联网**：当前年份落在数据覆盖内就完全不联网，一年只真正需要更新一次。
+            - **临期预取**：覆盖末年的 **12 月起**才后台预取次年，阈值晚于国务院发文，拉必有所得、不空转。
+            - **跨年 / 过期 → 立即自愈**：哪怕整个 12 月没开机，跨年后也会立即拉取，双保险不会错过。
+            - **缓存丢失/损坏 → 内置表兜底 + 联网恢复**，功能不受影响。
+            - A股交易日、工作日、周末、法定节假日四种规则共用同一份数据，一更新全更新（交易日为「工作日/节假日」派生结果，非独立数据集）。
+
+            ### 🛡️ 新增 · 备用数据源自动容错
+
+            主源为本仓库自托管的 GitHub raw 静态 JSON；新增由主 URL 派生的 **jsDelivr CDN 镜像**（同一仓库同一文件、CORS `*`）。主源故障（超时/HTTP 错误/网络不可达）自动切备源，双源都失败才静默回落到缓存或内置表。仍是零新依赖、零新权限、非第三方 API。
+
+            ### 📦 发版纪律 · 每个版本都内置当前最新数据
+
+            发布流程在打包前强制升级 `chinese_calendar` 并重新生成日历数据（自动探测新年份）、校验一致性后再打进安装包 —— **装上就是发版时刻最新的数据**。运行时同步只用于已装旧版本兜底。CI 定时保鲜任务也降频为「11 月发布季每周 + 其余每月」，贴合一年一发的节奏。
 
             ### 📌 本版仍包含此前全部能力
 
             - 📅 **灵活闹钟重复规则**（v0.7.2）：每天 / 工作日（含调休）/ 周末 / 法定节假日 / A股交易日 / 自定义 / 一次性
+            - 🔄 **日历数据自动更新**（v0.7.3）：构建期 CI 自动补齐新年份 + 运行时静默热更新，严格校验 + 只增不减防回退
             - 🔊 **语音报时**（默认关闭，可选声音与规则、中英文、免打扰）
             - 🚀 **Windows 开机自启修复**、🆕 **一键更新** + 🛠️ **NSIS 更新卡死修复**
             - 🔗「项目与更新」链接直指 `releases/latest`
@@ -115,7 +151,7 @@ jobs:
 
             ### ✅ 验证
 
-            全套 11 套回归全部通过，合计 **532 项**；新增 `verify_calendar_sync.py`（95 项，含 Node 行为测试：真实加载模块实测热替换、严格校验、防回退、缓存、节流与交易日判定随之更新），无回归。
+            全套 11 套回归全部通过，合计 **566 项**；`verify_calendar_sync.py` 扩至 129 项（覆盖驱动 8 个日期场景、主源故障切备源、双源失败、缓存恢复、发版刷新纪律、CI 降频均实测，Node 行为测试真实加载模块），无回归。
 
             完整版本记录见 [CHANGELOG.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/CHANGELOG.md) · 项目介绍见 [README.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/README.md) · 协议 MIT。
           releaseDraft: false

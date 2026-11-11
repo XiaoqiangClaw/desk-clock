@@ -1,7 +1,7 @@
 # Desk Clock — 设计契约
 
 > 本文是模块接口、样式与配置模型的技术说明。
-> 当前版本 **v0.7.3**，功能与行为以根目录 `README.md` 和 `CHANGELOG.md` 为准。
+> 当前版本 **v0.7.4**，功能与行为以根目录 `README.md` 和 `CHANGELOG.md` 为准。
 
 开源桌面时钟：只显示时间，可选是否显示秒，8 种样式，无边框透明、低资源、跨 Windows / macOS / Linux；
 同一进程可开任意多个时钟窗口，**每个窗口都有全套独立配置**。
@@ -101,20 +101,24 @@
 - `rule = { mode, weekdays:[0-6], dates:['YYYY-MM-DD'], skipHolidays }`；`dates` 显式命中一律响铃；`custom` 按 `weekdays` 命中，可选 `skipHolidays` 排除法定节假日。
 - 兼容：`DeskClock.Prefs.normalize()` 把每条闹钟规整为 `{ id, time, repeat, rule }`；旧 `repeat:true`→`daily`、`false`→`once`（一次性，响后移除）。触发在 `ui/app.js` 的 `maybeFireAlarms()`：一次性到点即响，重复闹钟按 `Schedule.matches(rule, localDate)` 判定。
 
-### 日历数据自动更新（v0.7.3，`scripts/gen-calendar.py` + `ui/calendar-sync.js` + CI）
-> 交易日不是独立数据、而是「工作日/节假日」的派生结果；真正会过期的是国务院每年发布的放假 + 调休安排（政策数据，约每年 11 月发布次年安排，`chinese_calendar` 随之更新）。四种规则共用一份数据，一更新全更新。故采用「构建期 + 运行时」双层闭环让数据自动常新。
+### 日历数据自动更新（v0.7.3 双层闭环 → v0.7.4 覆盖驱动，`scripts/gen-calendar.py` + `ui/calendar-sync.js` + CI）
+> 交易日不是独立数据、而是「工作日/节假日」的派生结果；真正会过期的是国务院每年发布的放假 + 调休安排（政策数据，约每年 11 月上旬发布次年安排，`chinese_calendar` 随之更新）。四种规则共用一份**按年整块覆盖**的数据，一更新全更新。v0.7.4 改为「覆盖驱动」：数据覆盖今天就不联网，只在临期/过期/缓存丢失时才拉。
 
 - **生成器 `scripts/gen-calendar.py`**：用「三点探测法」（每年 1/1、6/1、12/31 均可被 `is_workday` 判定才算完整支持）自动发现 `chinese_calendar` 支持到的最新年份，从 2024 起连续纳入，**不写死年份常量**；支持 `YEARS=2024-2027` 环境变量固定年份（复现/回归用）。同时产出两个恒等、幂等（便于 `git diff --quiet`）的文件：
   - `ui/calendar-data.js`：`window.DeskClock.CalendarData = {...};`，内置兜底、挂全局、`file://` 可跑；
   - `ui/calendar-data.json`：纯 JSON，供运行时 `fetch`，自托管于本仓库 `main` 分支（`raw.githubusercontent.com`，CORS `*`）。
-- **① 构建期 `.github/workflows/calendar-sync.yml`**：每周定时 + 手动触发，`pip install --upgrade chinese_calendar` → 重跑生成器 → `node --check` + 结构/双文件一致性校验 → 仅当 `git diff` 有变化才提交回 `main`。`GITHUB_TOKEN` 的 push 不触发其它 workflow，无构建循环。上游发布新一年安排后，仓库数据自动补齐该年份。
-- **② 运行时 `ui/calendar-sync.js` → `DeskClock.CalendarSync`**：已安装旧版本无需重装即享新年份。
-  - `start()`：启动先应用 `localStorage` 缓存（`deskclock.calendar.data`），再延迟 2.5s 按节流静默联网；`status()`/`onChange(cb)` 供 UI 展示覆盖年份、来源（builtin/cache/remote）、busy/error。
-  - `syncNow(force)`：`fetch` 本仓库 `calendar-data.json`（`AbortController` 8s 超时 + cache-buster），成功后 `_applyRemote(data,'remote')` → `Schedule.setData()` 严格校验 + 只增不减 → 落缓存 + `emit()`；任何失败/超时/离线/数据异常静默回落，绝不抛错、不打扰用户。节流：成功 24h、失败 4h 内不重复请求；浏览器预览（非 native）自动跳过联网以免回归噪声。
+- **① 构建期 `.github/workflows/calendar-sync.yml`**（v0.7.4 降频）：**11 月发布季每周一 + 其余月份每月 1 号**定时 + 手动触发，`pip install --upgrade chinese_calendar` → 重跑生成器 → `node --check` + 结构/双文件一致性校验 → 仅当 `git diff` 有变化才提交回 `main`。`GITHUB_TOKEN` 的 push 不触发其它 workflow，无构建循环。贴合政策数据一年一发的节奏，避免全年每周空跑。
+- **③ 发版纪律 `.github/workflows/release.yml`**（v0.7.4 新增）：每个 publish job 在打包前先 `pip install --upgrade chinese_calendar` → 重跑生成器 → 校验 `.js`/`.json` 一致性与年份连续，把**发版时刻最新的数据直接打进安装包**。因此每个版本内置的都是当前最新数据，不依赖发版时恰好刚同步过；运行时同步仅服务于已装旧版本。
+- **② 运行时 `ui/calendar-sync.js` → `DeskClock.CalendarSync`**（v0.7.4 覆盖驱动）：已安装旧版本无需重装即享新年份。
+  - `decide(today, coverage)` 纯函数是核心：`y > maxYear → 'expired'`（跨年/过期，立即自愈拉取）；`y === maxYear && month >= 11 → 'prefetch'`（覆盖末年 12 月起临期预取，晚于国务院 11 月上旬发布通知，不空转）；否则 `'local'`（覆盖内纯本地零联网）。8 个关键日期场景已回归断言。
+  - `start()`：先应用 `localStorage` 缓存（离线即享上次同步成果）；缓存丢失/损坏则 `cacheRecoveryPending = true`，内置表兜底并允许一次联网恢复。`status()`/`onChange(cb)` 供 UI 展示覆盖年份、来源（builtin/cache/remote）、`decision`、busy/error。
+  - `shouldFetch(force)`：开关 + 覆盖驱动 + 轻量节流。`local` 且无恢复需求直接返回 false；`expired` 为硬需求（只有上次失败且距今 < 4h 才退避，否则每次启动尝试直到成功）；`prefetch`/恢复 走 `PREFETCH_OK_INTERVAL`(24h) / `FAIL_INTERVAL`(4h)。浏览器预览（非 native）自动跳过联网以免回归噪声。
+  - `fetchWithFallback()`：数据源 `SOURCES = [RAW_URL, MIRROR_URL]`。主源为本仓库 `raw.githubusercontent.com`；**备源 `MIRROR_URL` 由主 URL 字符串派生**为 `cdn.jsdelivr.net/gh/.../desk-clock@main/ui/calendar-data.json`（同一仓库同一文件、CORS `*`，避免维护两份地址）。主源失败自动切备源，双源失败才静默回落。
+  - `_applyRemote(data, source)`：`Schedule.setData()` 严格校验（`validateData`：年份 4 位、`h`/`w` 数组、元素 `\d{4}`、数量上限）+ 只增不减防回退 → 落缓存 + `emit()`。任何失败/超时（8s `AbortController`）/数据异常静默回落，绝不抛错、不打扰用户。
   - `setEnabled(v)`：由关转开时立即尝试一次；`storage` 事件让其它窗口实时跟上同步结果。
-  - 关键常量：`RAW_URL`（`xiaoqiangclub/desk-clock/main/ui/calendar-data.json`）、`OK_INTERVAL`、`FAIL_INTERVAL`、`REQUEST_TIMEOUT`。零新依赖、零新权限（与 `Prefs.checkUpdate` 同一通道），数据源自托管可控可审计。
+  - 关键常量：`RAW_URL`、`PREFETCH_MONTH = 11`、`PREFETCH_OK_INTERVAL`、`FAIL_INTERVAL`、`REQUEST_TIMEOUT`。零新依赖、零新权限（与 `Prefs.checkUpdate` 同一通道），数据源自托管可控可审计。
 - **偏好与 UI**：`ui/prefs.js` 新增全局项 `calendarAutoSync`（默认 `true`）；设置「关于」页「📅 日历数据」卡片（`pref-cal-autosync` 开关 / `cal-sync-now` 手动检查 / `cal-sync-status` 状态行，`data-dyn` 由 `renderCalSyncStatus()` 管理），i18n 中英双语。`ui/index.html` 加载顺序：`calendar-data.js` → `schedule.js` → `calendar-sync.js` → `app.js`。
-- **验收**：`scripts/verify_calendar_sync.py`（95 项）——纯文件结构检查 + Node 行为测试（mock 浏览器环境真实加载两个模块，实测热替换覆盖增长、严格校验、防回退、缓存落盘、节流、离线优先与交易日判定随之更新）。
+- **验收**：`scripts/verify_calendar_sync.py`（129 项）——纯文件结构检查 + Node 行为测试（mock 浏览器环境真实加载两个模块，实测热替换覆盖增长、严格校验、防回退、缓存落盘、覆盖驱动 8 个日期场景、主源故障切备源、双源失败、离线优先与交易日判定随之更新）。
 
 ### `ui/announce.js` → `DeskClock.Announce`（v0.7，未发布）
 - 语音播报（纯 Web Speech API + 复用 `Alarm` 合成提示音，零新依赖）；顶层零副作用，`speechSynthesis` 全部 try/catch 保护，无语音引擎时优雅降级（仅播提示音）。

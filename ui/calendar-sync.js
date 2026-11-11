@@ -3,32 +3,39 @@
   window.DeskClock = window.DeskClock || {};
 
   // ==========================================================================
-  // DeskClock.CalendarSync — 日历数据运行时静默同步（v0.7.3）
+  // DeskClock.CalendarSync — 日历数据运行时静默同步（v0.7.4 覆盖驱动）
   // --------------------------------------------------------------------------
   // 背景：工作日 / 周末 / 法定节假日 / A股交易日 四种重复规则共用同一份国务院
-  // 放假 + 调休数据（ui/calendar-data.js）。这份是政策数据，国务院每年（约 11 月）
-  // 发布次年安排后上游 chinese_calendar 才会更新，因此内置表会随时间过期。
+  // 放假 + 调休数据（ui/calendar-data.js）。数据按「年」整块覆盖，国务院每年
+  // 11 月上旬发布次年安排后上游 chinese_calendar 才会更新。
   //
-  // 本模块让「已安装旧版本」的用户无需重装/升级，也能自动拿到未来年份的正确日历：
-  //   1) 启动先应用 localStorage 里上次成功同步的缓存（离线可用）；
-  //   2) 按节流静默从本仓库自托管的 calendar-data.json 拉取最新数据；
-  //   3) 严格校验（Schedule.validateData）+ 只增不减（Schedule.setData）后热替换；
-  //   4) 失败 / 超时 / 离线 / 数据异常一律静默回落到缓存或内置表，绝不打扰用户。
+  // v0.7.4 改为「覆盖驱动」而非 v0.7.3 的「按时间盲轮询」：
+  //   · 当前年份落在覆盖范围内 → 纯本地，完全不联网（一年只真正需要更新一次）
+  //   · 覆盖末年的 12 月起       → 预取次年（此时国务院通知已发布，一定拿得到）
+  //   · 跨年 / 内置表已过期      → 立即拉取，自愈（哪怕整个 12 月没开机）
+  //   · 缓存丢失/损坏            → 内置表兜底 + 尝试恢复此前同步到的未来年份
+  //   · 数据源 主→备 自动切换    → 双源都失败才静默回落，功能永不中断
   //
-  // 设计约束：零新依赖、零新权限（与 checkUpdate 同为前端直接 fetch）、默认静默、
-  // 内置表永远兜底、可通过偏好开关关闭自动联网。
+  // 设计约束：零新依赖、零新权限、默认静默、内置表永远兜底、可开关。
+  // 另：每个版本发布时 release.yml 会把「当前最新」的数据重新生成并直接打进安装包。
   // ==========================================================================
 
-  // 数据源固定为本仓库 main 分支的静态文件（自托管，非第三方 API，可控可审计）。
-  // raw.githubusercontent.com 返回 Access-Control-Allow-Origin: *，与现有检查更新同一通道。
+  // 主源：本仓库 main 分支自托管静态文件（非第三方 API，可控可审计，CORS *）。
   var RAW_URL = 'https://raw.githubusercontent.com/xiaoqiangclub/desk-clock/main/ui/calendar-data.json';
+  // 备源：由主 URL 派生的 jsDelivr CDN 镜像（同一仓库同一文件，实测 HTTP 200 + CORS *）。
+  // 派生而非硬编码，避免维护两份地址、也保证两源永远指向同一份数据。
+  var MIRROR_URL = RAW_URL
+    .replace('https://raw.githubusercontent.com/', 'https://cdn.jsdelivr.net/gh/')
+    .replace('/main/', '@main/');
+  var SOURCES = [RAW_URL, MIRROR_URL];
 
   var DATA_KEY = 'deskclock.calendar.data';      // 上次成功同步的数据（JSON 字符串）
-  var META_KEY = 'deskclock.calendar.meta';      // { lastSync, lastAttempt, source }
+  var META_KEY = 'deskclock.calendar.meta';      // { lastSync, lastAttempt, lastAttemptOk, source }
   var START_DELAY = 2500;                        // 启动后延迟，绝不阻塞首屏
-  var OK_INTERVAL = 24 * 3600 * 1000;            // 成功后 24h 内不重复联网
-  var FAIL_INTERVAL = 4 * 3600 * 1000;           // 失败后 4h 内不重试
-  var REQUEST_TIMEOUT = 8000;                    // 单次请求超时
+  var PREFETCH_OK_INTERVAL = 24 * 3600 * 1000;   // 临期预取成功后 24h 内不重复联网
+  var FAIL_INTERVAL = 4 * 3600 * 1000;           // 失败后 4h 内不重试（避免刷屏）
+  var REQUEST_TIMEOUT = 8000;                    // 单源单次请求超时
+  var PREFETCH_MONTH = 11;                       // 0-based：11 = 12 月起开始预取次年
 
   var listeners = [];
   var state = {
@@ -40,9 +47,14 @@
   };
   var started = false;
   var startTimer = null;
+  var cacheRecoveryPending = false;             // 缓存丢失 → 允许一次联网恢复
 
   function Sched() { return window.DeskClock && window.DeskClock.Schedule; }
   function now() { return Date.now(); }
+  function currentCoverage() {
+    var S = Sched();
+    return (S && S.coverage) ? S.coverage() : [];
+  }
 
   function readMeta() {
     try {
@@ -65,12 +77,39 @@
   }
 
   function emit() {
-    for (var i = 0; i < listeners.length; i++) {
-      try { listeners[i](status()); } catch (e) {}
+    for (var j = 0; j < listeners.length; j++) {
+      try { listeners[j](status()); } catch (e) {}
     }
   }
 
-  // 核心：校验 + 热替换 + 落缓存。返回 {ok, reason}。抽成独立函数便于回归测试注入 mock 数据。
+  // ---- 覆盖驱动的核心判定（纯函数，便于回归测试注入任意日期/覆盖）----
+  // 返回 'local'（数据够用，纯本地）| 'prefetch'（临期预取）| 'expired'（已过期，立即拉）
+  function decide(today, coverage) {
+    var y = today.getFullYear();
+    var maxY = (coverage && coverage.length) ? coverage[coverage.length - 1] : (y - 1);
+    if (y > maxY) return 'expired';                                  // 跨年，内置表已过期 → 自愈
+    if (y === maxY && today.getMonth() >= PREFETCH_MONTH) return 'prefetch'; // 12 月起预取次年
+    return 'local';                                                 // 覆盖内且未临期 → 零联网
+  }
+
+  // 是否值得联网：开关 + 覆盖驱动判定 + 轻量节流（仅约束「预取/恢复/失败」，不约束「已过期」）。
+  function shouldFetch(force) {
+    if (!state.enabled && !force) return false;
+    if (force) return true;
+    var d = decide(new Date(), currentCoverage());
+    if (d === 'local' && !cacheRecoveryPending) return false;
+    var meta = readMeta(), last = meta.lastAttempt || 0;
+    if (d === 'expired') {
+      // 已过期是硬需求：只有「上次失败且距今 < 4h」才退避，否则每次启动都尝试，直到成功。
+      if (!meta.lastAttemptOk && (now() - last) < FAIL_INTERVAL) return false;
+      return true;
+    }
+    // prefetch / cache-recovery：成功 24h、失败 4h 节流，避免临期月每天开机都拉。
+    var interval = meta.lastAttemptOk ? PREFETCH_OK_INTERVAL : FAIL_INTERVAL;
+    return (now() - last) >= interval;
+  }
+
+  // 核心：校验 + 热替换 + 落缓存。返回 {ok, reason}。独立函数便于回归测试注入 mock 数据。
   function applyRemote(data, source) {
     var S = Sched();
     if (!S || typeof S.setData !== 'function') return { ok: false, reason: 'no-schedule' };
@@ -84,6 +123,7 @@
     state.source = source;
     state.lastSync = meta.lastSync;
     state.lastError = false;
+    cacheRecoveryPending = false;
     emit();
     return { ok: true, coverage: res.coverage };
   }
@@ -116,20 +156,26 @@
     });
   }
 
-  // 判断是否值得联网：尊重开关 + 节流。
-  function shouldFetch(force) {
-    if (!state.enabled && !force) return false;
-    var meta = readMeta();
-    var last = meta.lastAttempt || 0;
-    var interval = meta.lastAttemptOk ? OK_INTERVAL : FAIL_INTERVAL;
-    if (force) return true;
-    return (now() - last) >= interval;
+  // 主源失败自动切备源；任一源成功即返回 {data, sourceIndex}；全失败才抛出。
+  function fetchWithFallback() {
+    var idx = 0;
+    function attempt() {
+      if (idx >= SOURCES.length) return Promise.reject(new Error('all-sources-failed'));
+      var i = idx++;
+      var bust = SOURCES[i] + (SOURCES[i].indexOf('?') >= 0 ? '&' : '?') + 'v=' + now();
+      return fetchJson(bust).then(function (data) {
+        return { data: data, sourceIndex: i };
+      }, function () {
+        return attempt();   // 该源失败 → 下一个源
+      });
+    }
+    return attempt();
   }
 
-  // 一次同步：静默、绝不抛出。force=true 跳过节流（手动「立即检查」或开关刚打开）。
+  // 一次同步：静默、绝不抛出。force=true 跳过所有判定（手动「立即检查」）。
   function syncNow(force) {
     if (state.busy) return Promise.resolve({ ok: false, reason: 'busy' });
-    if (!shouldFetch(force)) return Promise.resolve({ ok: false, reason: 'throttled' });
+    if (!shouldFetch(force)) return Promise.resolve({ ok: false, reason: 'local' });
     state.busy = true;
     state.lastError = false;
     emit();
@@ -145,18 +191,18 @@
       return Promise.resolve({ ok: false, reason: 'preview' });
     }
 
-    var bust = RAW_URL + (RAW_URL.indexOf('?') >= 0 ? '&' : '?') + 'v=' + now();
-    return fetchJson(bust).then(function (data) {
-      var res = applyRemote(data, 'remote');
+    return fetchWithFallback().then(function (r) {
+      var res = applyRemote(r.data, 'remote');
       var meta = readMeta();
       meta.lastAttemptOk = !!res.ok;
+      if (res.ok) meta.usedSourceIndex = r.sourceIndex;
       writeMeta(meta);
       state.busy = false;
       state.lastError = !res.ok;
       emit();
       return res;
     }).catch(function () {
-      // 失败无感：保留内置 / 缓存数据，仅做节流登记。
+      // 双源都失败：无感，保留内置/缓存数据，仅登记节流。
       var meta = readMeta();
       meta.lastAttemptOk = false;
       writeMeta(meta);
@@ -167,7 +213,7 @@
     });
   }
 
-  // 启动：先应用缓存（离线即享上次同步成果），再按节流决定是否后台联网。
+  // 启动：先应用缓存（离线即享上次同步成果），再按「覆盖驱动」决定是否后台联网。
   function start() {
     if (started) return;
     started = true;
@@ -176,22 +222,25 @@
     state.lastSync = meta.lastSync || 0;
 
     var cached = readCache();
-    if (cached && S && typeof S.validateData === 'function' && S.validateData(cached)) {
+    var cacheOk = !!(cached && S && typeof S.validateData === 'function' && S.validateData(cached));
+    if (cacheOk) {
       var res = S.setData(cached);               // 只增不减，缓存比内置旧会被安全拒绝
       if (res.ok) state.source = 'cache';
+    } else {
+      // 缓存丢失/损坏：内置表兜底（Schedule 默认已加载），并允许一次联网恢复未来年份。
+      cacheRecoveryPending = true;
     }
     emit();
 
     // 跨窗口：任一窗口同步成功后，其它已打开窗口实时跟上（同源 localStorage）。
-    // 浏览器不触发 storage 事件时也无妨——各窗口下次启动会重新应用缓存。
     if (typeof window.addEventListener === 'function') {
       window.addEventListener('storage', function (ev) {
         if (!ev || ev.key !== DATA_KEY || !ev.newValue) return;
-        var S = Sched();
-        if (!S || typeof S.setData !== 'function') return;
+        var S2 = Sched();
+        if (!S2 || typeof S2.setData !== 'function') return;
         try {
           var d = JSON.parse(ev.newValue);
-          if (S.validateData(d) && S.setData(d).ok) { state.source = 'remote'; state.lastError = false; }
+          if (S2.validateData(d) && S2.setData(d).ok) { state.source = 'remote'; state.lastError = false; }
         } catch (e) {}
         emit();
       });
@@ -205,19 +254,18 @@
     var was = state.enabled;
     state.enabled = !!v;
     emit();
-    // 仅「由关转开」时立即尝试一次（仍受节流保护）；启动时首次赋值不额外联网，
-    // 统一交给 start() 的延迟检查，避免多个窗口冷启动同时打网络。
+    // 仅「由关转开」时立即尝试一次（仍受覆盖驱动判定保护）；启动首次赋值不额外联网。
     if (state.enabled && !was) syncNow(false);
   }
   function status() {
-    var S = Sched();
     return {
       enabled: state.enabled,
-      coverage: (S && S.coverage) ? S.coverage() : [],
+      coverage: currentCoverage(),
       source: state.source,
       lastSync: state.lastSync,
       busy: state.busy,
-      lastError: state.lastError
+      lastError: state.lastError,
+      decision: decide(new Date(), currentCoverage())
     };
   }
   function onChange(cb) {
@@ -230,12 +278,16 @@
 
   window.DeskClock.CalendarSync = {
     RAW_URL: RAW_URL,
+    MIRROR_URL: MIRROR_URL,
+    SOURCES: SOURCES,
     start: start,
     syncNow: syncNow,
     setEnabled: setEnabled,
     status: status,
     onChange: onChange,
-    _applyRemote: applyRemote,        // 供回归测试注入 mock 数据（不依赖真实网络）
-    _shouldFetch: shouldFetch
+    _applyRemote: applyRemote,        // 回归测试：注入 mock 数据
+    _shouldFetch: shouldFetch,        // 回归测试：节流/开关判定
+    _decide: decide,                  // 回归测试：覆盖驱动日期场景
+    _fetchWithFallback: fetchWithFallback
   };
 })();

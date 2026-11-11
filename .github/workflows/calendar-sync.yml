@@ -16,10 +16,13 @@ name: Calendar Data Sync
 #   - 已安装旧版本：运行时 ui/calendar-sync.js 静默从本仓库 raw 拉取最新 json（②）。
 #
 # 说明：使用 GITHUB_TOKEN 的 push 不会触发其它 workflow，因此不会造成构建循环。
+# v0.7.4 降频：政策数据一年一发（国务院 11 月上旬发次年通知），不再每周空跑。
+#  · 11 月发布季：每周一密集跟进（通知 + 上游库更新就在这个窗口）
+#  · 其余月份：每月 1 号兜底一次（覆盖年内临时调整/勘误）
 on:
   schedule:
-    # 每周一 03:17 UTC（避开整点高峰）；政策数据一年发布一次，每周检查足够及时。
-    - cron: "17 3 * * 1"
+    - cron: "17 3 * 11 1"
+    - cron: "17 3 1 1-10,12 *"
   workflow_dispatch:
 
 permissions:
