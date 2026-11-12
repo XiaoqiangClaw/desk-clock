@@ -13,7 +13,9 @@
   var CD = (window.DeskClock && window.DeskClock.CalendarData) || { years: {} };
 
   // 重复模式（含“自定义”）。与旧版 repeat:bool 兼容：旧 repeat:true 无 rule → daily。
-  var MODES = ['daily', 'workdays', 'weekends', 'holidays', 'trading', 'custom'];
+  // v0.7.5: 补回文档与词条早已承诺的「一次性」；matches() 里本来就有
+  // case 'once'，缺的只是这里的白名单，导致旧数据被归一化成 daily 每天响。
+  var MODES = ['daily', 'workdays', 'weekends', 'holidays', 'trading', 'custom', 'once'];
 
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
   function md(d) { return pad2(d.getMonth() + 1) + pad2(d.getDate()); }       // MMdd
@@ -61,21 +63,43 @@
     }
     return ys.sort(function (a, b) { return a - b; });
   }
+  // v0.7.5: MMdd 必须是该年份真实存在的日期（含闰年 0229）。
+  function validMMDD(s, y) {
+    if (typeof s !== 'string' || !/^\d{4}$/.test(s)) return false;
+    var m = parseInt(s.slice(0, 2), 10), day = parseInt(s.slice(2), 10);
+    if (m < 1 || m > 12 || day < 1) return false;
+    return day <= new Date(y, m, 0).getDate();
+  }
   function validateData(d) {
     if (!d || typeof d !== 'object' || Array.isArray(d)) return false;
     if (!d.years || typeof d.years !== 'object' || Array.isArray(d.years)) return false;
-    var count = 0, k, j, r;
+    var count = 0, k, j, r, years = [];
     for (k in d.years) {
       if (!Object.prototype.hasOwnProperty.call(d.years, k)) continue;
       if (!/^\d{4}$/.test(k)) return false;
+      var y = parseInt(k, 10);
+      years.push(y);
       r = d.years[k];
       if (!r || typeof r !== 'object' || !Array.isArray(r.h) || !Array.isArray(r.w)) return false;
       if (r.h.length > 200 || r.w.length > 200) return false;   // 防异常膨胀
-      for (j = 0; j < r.h.length; j++) if (typeof r.h[j] !== 'string' || !/^\d{4}$/.test(r.h[j])) return false;
-      for (j = 0; j < r.w.length; j++) if (typeof r.w[j] !== 'string' || !/^\d{4}$/.test(r.w[j])) return false;
+      for (j = 0; j < r.h.length; j++) if (!validMMDD(r.h[j], y)) return false;
+      for (j = 0; j < r.w.length; j++) if (!validMMDD(r.w[j], y)) return false;
       count++;
     }
-    return count > 0 && count <= 40;                            // 合理年份数量
+    if (!(count > 0 && count <= 40)) return false;              // 合理年份数量
+    years.sort(function (a, b) { return a - b; });
+    for (j = 1; j < years.length; j++) {
+      if (years[j] !== years[j - 1] + 1) return false;         // 年份必须连续，无空洞
+    }
+    if (Array.isArray(d.coverage)) {
+      // 生成器写的是字符串年份（["2024", ...]），必须统一成数字再比对。
+      var cov = d.coverage.map(function (x) { return Number(x); })
+        .filter(function (x) { return isFinite(x) && x > 1900 && x < 3000; })
+        .sort(function (a, b) { return a - b; });
+      if (cov.length !== years.length) return false;
+      for (j = 0; j < cov.length; j++) if (cov[j] !== years[j]) return false;
+    }
+    return true;
   }
   // 只增不减：新数据年份集合必须是当前的超集（生成器始终全量生成，天然满足），
   // 防止 main 分支数据意外回退或第三方注入旧数据把用户降级。拒绝时保留现有数据。

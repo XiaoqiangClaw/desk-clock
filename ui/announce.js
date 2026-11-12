@@ -2,7 +2,7 @@
   'use strict';
   window.DeskClock = window.DeskClock || {};
 
-  // 桌面时钟「语音播报」模块（v0.7，未发布）。
+  // 桌面时钟「语音播报」模块（v0.7.0 已发布）。
   // 纯前端 Web Speech API + 复用现有 WebAudio 铃声做前导音/降级。零新依赖、跨平台。
   // 设计原则：顶层零副作用（不访问 speechSynthesis，避免在无语音引擎的环境报错），
   // 纯函数（inQuiet/shouldFire/buildText）便于无头 Chromium 回归。
@@ -33,9 +33,10 @@
 
   function buildZh(now, cfg) {
     var h = now.getHours(), m = now.getMinutes();
-    var h12 = !!cfg.hour12;
     var withDate = !!cfg.announceIncludeDate;
-    var hourDisplay = h12 ? (h % 12 === 0 ? 12 : h % 12) : h;
+    // 中文报时一律用 12 小时制 + 时段词（「下午三点」）。hour12 只影响
+    // 时钟显示，不该让语音变成「下午十五点」这种别扭说法。
+    var hourDisplay = h % 12 === 0 ? 12 : h % 12;
     var minPart;
     if (m === 0) minPart = '整';
     else if (m < 10) minPart = '零' + zhNum(m) + '分';
@@ -116,8 +117,10 @@
 
   function buildText(now, cfg) {
     cfg = cfg || {};
-    var L = cfg.announceLang || cfg.lang || 'zh-CN';
-    return String(L).indexOf('en') === 0 ? buildEn(now, cfg) : buildZh(now, cfg);
+    // v0.7.5: 移除英文播报。多数系统不自带英文语音，选英文只会静音；
+    // 无论界面语言或旧的 announceLang 设置如何，一律用中文报时。
+    // buildEn 保留供兼容与纯函数测试使用，但不再被 buildText 调用。
+    return buildZh(now, cfg);
   }
 
   // ---- Web Speech API（运行时访问，全部 try/catch 保护）----
@@ -155,9 +158,8 @@
         }
       }
       if (!chosen) {
-        var langFull = String(cfg.announceLang || cfg.lang || 'zh-CN');
-        var prefix = langFull.indexOf('zh') === 0 ? 'zh' :
-                     langFull.indexOf('en') === 0 ? 'en' : '';
+        // 只挑中文语音，绝不回退到英文语音（英文语音常常不存在 → 无声）。
+        var prefix = 'zh';
         if (prefix) {
           for (i = 0; i < list.length; i++) {
             if (String(list[i].lang || '').indexOf(prefix) === 0) { chosen = list[i]; break; }
@@ -167,7 +169,7 @@
         if (!chosen && list.length) chosen = list[0];
       }
       u.voice = chosen || null;
-      u.lang = String(cfg.announceLang || cfg.lang || 'zh-CN').indexOf('en') === 0 ? 'en-US' : 'zh-CN';
+      u.lang = 'zh-CN';
       u.rate = Math.min(2, Math.max(0.5, Number(cfg.announceRate) || 1));
       u.volume = Math.min(1, Math.max(0, Number(cfg.announceVolume) || 1));
       u.pitch = 1;

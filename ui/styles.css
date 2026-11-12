@@ -448,6 +448,9 @@ v0.6.2：必须给所有子元素 no-drag，否则 #app 的 drag region 会吞�
 .alarm-toast-body { margin: 8px 0 12px; font-size: 12px; }
 .alarm-toast-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .alarm-toast-actions .dc-btn { flex: 0 0 auto; }
+.alarm-note-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; }
+.alarm-note-row .dc-input { flex: 1 1 auto; }
+.alarm-note { display: block; font-size: 11px; color: var(--s-dim); margin-top: 2px; word-break: break-all; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

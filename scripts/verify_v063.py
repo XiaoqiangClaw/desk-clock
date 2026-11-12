@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""v0.7.4 release: installer hooks + version consistency structural checks.
+"""v0.7.4/v0.7.5 release: installer hooks + version consistency structural checks.
 """
 import json
 import re
@@ -45,9 +45,9 @@ conf = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="u
 nsis = conf.get("bundle", {}).get("windows", {}).get("nsis", {})
 check("bundle.windows.nsis.installerHooks == ./windows/hooks.nsh",
       nsis.get("installerHooks") == "./windows/hooks.nsh", nsis.get("installerHooks"))
-check("tauri.conf.json version is 0.7.4", conf.get("version") == "0.7.4", conf.get("version"))
-check("main window title is Desk Clock v0.7.4",
-      conf["app"]["windows"][0].get("title") == "Desk Clock v0.7.4",
+check("tauri.conf.json version is 0.7.5", conf.get("version") == "0.7.5", conf.get("version"))
+check("main window title is Desk Clock v0.7.5",
+      conf["app"]["windows"][0].get("title") == "Desk Clock v0.7.5",
       conf["app"]["windows"][0].get("title"))
 check("bundle.active/targets/icon unchanged",
       conf["bundle"].get("active") is True
@@ -64,22 +64,28 @@ cb = m.group(2) if m else ""
 check("single-instance callback found", bool(m))
 check("single-instance callback checks --dc-exit-for-install",
       "--dc-exit-for-install" in cb)
-check("single-instance callback calls app.exit(0)", "app.exit(0)" in cb)
+# v0.7.5: app.exit(0) alone was swallowed by the global CloseRequested handler
+# (every window answers prevent_close + hide), so the installer path now goes
+# through force_quit(), which sets QUITTING and really ends the process.
+check("single-instance callback force-quits the app",
+      "force_quit(app.clone())" in cb)
 check("single-instance callback keeps show_main_now fallback", "show_main_now(app)" in cb)
-check("CloseRequested still hides to tray (semantics unchanged)",
-      "api.prevent_close();" in lib and "let _ = window.hide();" in lib)
-check("lib.rs native titles all v0.7.4",
-      len(re.findall(r"Desk Clock v0\.7\.4", lib)) == 3
+check("CloseRequested hides to tray but lets quit / alert close for real",
+      "api.prevent_close();" in lib and "let _ = window.hide();" in lib
+      and "QUITTING.load(Ordering::SeqCst)" in lib
+      and 'window.label() == "alert"' in lib)
+check("lib.rs native titles all v0.7.5",
+      len(re.findall(r"Desk Clock v0\.7\.5", lib)) == 3
       and "Desk Clock v0.6.3" not in lib,
-      len(re.findall(r"Desk Clock v0\.7\.4", lib)))
+      len(re.findall(r"Desk Clock v0\.7\.5", lib)))
 
 # ===== 4. version consistency (4 places) =====
 cargo = (ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
 appjs = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
-check("Cargo.toml version 0.7.4", 'version = "0.7.4"' in cargo)
-check("ui/app.js APP_VERSION 0.7.4", "var APP_VERSION = '0.7.4';" in appjs)
-check("verify_v04.py version assertion 0.7.4",
-      'version badge shows 0.7.4' in (ROOT / "scripts" / "verify_v04.py").read_text(encoding="utf-8"))
+check("Cargo.toml version 0.7.5", 'version = "0.7.5"' in cargo)
+check("ui/app.js APP_VERSION 0.7.5", "var APP_VERSION = '0.7.5';" in appjs)
+check("verify_v04.py version assertion 0.7.5",
+      'version badge shows 0.7.5' in (ROOT / "scripts" / "verify_v04.py").read_text(encoding="utf-8"))
 check("no stale 0.6.3 in version sources",
       all("0.6.3" not in (ROOT / p).read_text(encoding="utf-8")
           for p in ("src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "scripts/verify_v04.py")))

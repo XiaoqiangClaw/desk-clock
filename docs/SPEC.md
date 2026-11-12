@@ -118,7 +118,7 @@
   - `setEnabled(v)`：由关转开时立即尝试一次；`storage` 事件让其它窗口实时跟上同步结果。
   - 关键常量：`RAW_URL`、`PREFETCH_MONTH = 11`、`PREFETCH_OK_INTERVAL`、`FAIL_INTERVAL`、`REQUEST_TIMEOUT`。零新依赖、零新权限（与 `Prefs.checkUpdate` 同一通道），数据源自托管可控可审计。
 - **偏好与 UI**：`ui/prefs.js` 新增全局项 `calendarAutoSync`（默认 `true`）；设置「关于」页「📅 日历数据」卡片（`pref-cal-autosync` 开关 / `cal-sync-now` 手动检查 / `cal-sync-status` 状态行，`data-dyn` 由 `renderCalSyncStatus()` 管理），i18n 中英双语。`ui/index.html` 加载顺序：`calendar-data.js` → `schedule.js` → `calendar-sync.js` → `app.js`。
-- **验收**：`scripts/verify_calendar_sync.py`（129 项）——纯文件结构检查 + Node 行为测试（mock 浏览器环境真实加载两个模块，实测热替换覆盖增长、严格校验、防回退、缓存落盘、覆盖驱动 8 个日期场景、主源故障切备源、双源失败、离线优先与交易日判定随之更新）。
+- **验收**：`scripts/verify_calendar_sync.py`（138 项）——纯文件结构检查 + Node 行为测试（mock 浏览器环境真实加载两个模块，实测热替换覆盖增长、严格校验、防回退、缓存落盘、覆盖驱动 8 个日期场景、主源故障切备源、双源失败、离线优先、年份连续性 / 闰日 / coverage 一致性校验与交易日判定随之更新）。
 
 ### `ui/announce.js` → `DeskClock.Announce`（v0.7，未发布）
 - 语音播报（纯 Web Speech API + 复用 `Alarm` 合成提示音，零新依赖）；顶层零副作用，`speechSynthesis` 全部 try/catch 保护，无语音引擎时优雅降级（仅播提示音）。
@@ -176,8 +176,10 @@
 - `node --check` 全部 JS 通过；Python 回归脚本 `py_compile` 通过；`tauri.conf.json` /
   `capabilities/default.json` 合法 JSON；shell 脚本 `bash -n` 通过。
 - 真实 Chromium（Playwright + loopback HTTP）分版本自动化检查：
-  `verify.py` 31 + `verify_features.py` 43 + `verify_v03.py` 35 + `verify_v04.py` 60 +
-  `verify_v05.py` 55 + `verify_v06.py` 22 + `verify_v061.py` 30 = **276 项通过**（v0.6.1）。
+  `verify.py` 31 + `verify_announce.py` 77 + `verify_calendar_sync.py` 138 +
+  `verify_features.py` 60 + `verify_v03.py` 35 + `verify_v04.py` 60 +
+  `verify_v05.py` 55 + `verify_v06.py` 22 + `verify_v061.py` 30 +
+  `verify_v062.py` 34 + `verify_v063.py` 33 = **575 项通过**（v0.7.5 工作区基线）。
 - 浏览器打开 `ui/index.html`：默认 flip 风格能显示当前时间、逐秒翻页、无黑底无边框；8 风格均正常渲染。
 - 多窗口：每个窗口各自渲染自己的样式/颜色/时区/显示秒；切换编辑目标不串配置；
   两个独立页面均只注册窗口作用域 `onMoved`、无全局 `tauri://move` 监听。

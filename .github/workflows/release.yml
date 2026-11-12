@@ -7,8 +7,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  # v0.7.5: 发版前跑与 build.yml 同等的静态门禁，避免只改 release 流程时绕过检查。
+  verify:
+    name: Verify (static)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Static checks
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/verify*.py scripts/gen-calendar.py
+          bash -n scripts/dev.sh scripts/build.sh scripts/preview.sh
+          for f in ui/*.js; do node --check "$f"; done
+          python3 -c "import json; json.load(open('src-tauri/tauri.conf.json')); json.load(open('src-tauri/capabilities/default.json')); json.load(open('ui/calendar-data.json'))"
+          echo "Static checks OK"
+
   publish:
     name: Publish ${{ matrix.platform }} ${{ matrix.args }}
+    needs: verify
     permissions:
       contents: write
     strategy:
@@ -32,7 +52,7 @@ jobs:
         with:
           node-version: lts/*
 
-      # v0.7.4 发版纪律：每个版本都把「当前最新」的日历数据直接打进安装包。
+      # v0.7.5 发版纪律：每个版本都把「当前最新」的日历数据直接打进安装包。
       # 此时升级 chinese_calendar 到最新版并重跑生成器（自动探测新年份），
       # 因此即使距离上次数据提交已过去很久，本版内置数据也一定是发版时刻最新的。
       - name: Setup Python (for fresh built-in calendar data)
@@ -104,7 +124,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Desk Clock ${{ github.ref_name }} 🕐"
           releaseBody: |
-            ## 🕐 Desk Clock v0.7.4
+            ## 🕐 Desk Clock v0.7.5
 
             好看、好用、还跨平台的开源桌面时钟 —— 透明悬浮在壁纸之上，无边框、无黑底。
             本次把日历数据同步从「按时间盲轮询」升级为**覆盖驱动**，并做到**每个版本都内置当前最新的日历数据**。
@@ -151,7 +171,7 @@ jobs:
 
             ### ✅ 验证
 
-            全套 11 套回归全部通过，合计 **566 项**；`verify_calendar_sync.py` 扩至 129 项（覆盖驱动 8 个日期场景、主源故障切备源、双源失败、缓存恢复、发版刷新纪律、CI 降频均实测，Node 行为测试真实加载模块），无回归。
+            全套 12 套回归全部通过，合计 **575 项**；`verify_calendar_sync.py` 扩至 138 项（覆盖驱动 8 个日期场景、主源故障切备源、双源失败、缓存恢复、发版刷新纪律、CI 降频均实测，Node 行为测试真实加载模块），无回归。
 
             完整版本记录见 [CHANGELOG.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/CHANGELOG.md) · 项目介绍见 [README.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/README.md) · 协议 MIT。
           releaseDraft: false

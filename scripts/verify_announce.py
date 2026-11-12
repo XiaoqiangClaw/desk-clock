@@ -158,16 +158,16 @@ check("app.js syncs + binds announcement UI",
 check("app.js plays chime before speaking",
       "Alarm.playChime" in appjs)
 
-# version strings must be consistent at 0.7.4 (this is now a release)
-check("APP_VERSION is 0.7.4", "var APP_VERSION = '0.7.4';" in appjs)
-check("Cargo.toml version is 0.7.4", 'version = "0.7.4"' in cargo)
-check("tauri.conf.json version is 0.7.4", '"version": "0.7.4"' in conf)
-check("lib.rs native titles are v0.7.4",
-      len(re.findall(r"Desk Clock v0\.7\.4", lib)) == 3,
-      len(re.findall(r"Desk Clock v0\.7\.4", lib)))
+# version strings must be consistent at 0.7.5 (this is now a release)
+check("APP_VERSION is 0.7.5", "var APP_VERSION = '0.7.5';" in appjs)
+check("Cargo.toml version is 0.7.5", 'version = "0.7.5"' in cargo)
+check("tauri.conf.json version is 0.7.5", '"version": "0.7.5"' in conf)
+check("lib.rs native titles are v0.7.5",
+      len(re.findall(r"Desk Clock v0\.7\.5", lib)) == 3,
+      len(re.findall(r"Desk Clock v0\.7\.5", lib)))
 check("docs mention v0.7 announcement",
       "播报" in rd("README.md") and "Announce" in rd("docs/SPEC.md")
-      and "v0.7.4" in rd("CHANGELOG.md"))
+      and "v0.7.5" in rd("CHANGELOG.md"))
 
 # ============================== B. browser ==============================
 from playwright.sync_api import sync_playwright
@@ -422,7 +422,8 @@ with sync_playwright() as pw:
         zDate: A.buildText(D(9,0), zh(true)),
         e0900: A.buildText(D(9,0), en(true)),
         e1530: A.buildText(D(15,30), en(true)),
-        e1530_24: A.buildText(D(15,30), en(false))
+        e1530_24: A.buildText(D(15,30), en(false)),
+        staleEn: A.buildText(D(15,30), {lang:'zh-CN', announceLang:'en', hour12:false})
       };
     }""")
     check("buildText zh 09:00 exact", bt["z0900"] == "现在是上午九点整", bt["z0900"])
@@ -430,9 +431,13 @@ with sync_playwright() as pw:
     check("buildText zh 22:05 exact", bt["z2205"] == "现在是晚上十点零五分", bt["z2205"])
     check("buildText zh with date includes month/day/weekday",
           "十一月" in bt["zDate"] and "星期三" in bt["zDate"] and "九点整" in bt["zDate"], bt["zDate"])
-    check("buildText en 9:00 AM exact", bt["e0900"] == "It's 9:00 AM.", bt["e0900"])
-    check("buildText en 3:30 PM exact", bt["e1530"] == "It's 3:30 PM.", bt["e1530"])
-    check("buildText en 24h exact", bt["e1530_24"] == "It's 15:30.", bt["e1530_24"])
+    # v0.7.5: English speech removed — every config now announces in Chinese.
+    check("buildText ignores en UI lang (09:00)",
+          bt["e0900"] == "现在是上午九点整", bt["e0900"])
+    check("buildText ignores en UI lang (15:30)",
+          bt["e1530"] == "现在是下午三点三十分" and bt["e1530_24"] == "现在是下午三点三十分", bt["e1530_24"])
+    check("buildText ignores stale announceLang=en",
+          bt["staleEn"] == "现在是下午三点三十分", bt["staleEn"])
 
     # --- speak() assembly + voices() + supported() ---
     sp = page.evaluate("""() => {

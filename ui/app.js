@@ -16,7 +16,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.7.4';
+  var APP_VERSION = '0.7.5';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -60,7 +60,7 @@
     for (var i = 0; i < ZONES.length; i++) if (ZONES[i].offset === offset) return ZONES[i].label;
     var h = Math.floor(Math.abs(offset) / 60), m2 = Math.abs(offset) % 60;
     var mm = m2 ? ':' + ('0' + m2).slice(-2) : '';
-    return 'UTC' + (offset >= 0 ? '+' : '') + h + mm;
+    return 'UTC' + (offset >= 0 ? '+' : '-') + h + mm;
   }
 
   var app = document.getElementById('app');
@@ -80,6 +80,13 @@
   var privError = false;    // v0.5: 权限状态读取失败（显示重试按钮）
   var editingClockId = null; // v0.5: 管理器正在编辑的窗口 id
   var ringTimeout = null;    // v0.6.2: 闹钟响铃自动停止计时器
+  var previewStopTimer = null; // v0.7.5: 铃声试听停止计时器（避免旧 timeout 误停新铃声）
+
+  function previewRing(ms) {
+    if (previewStopTimer) { clearTimeout(previewStopTimer); previewStopTimer = null; }
+    Alarm.startRing();
+    previewStopTimer = setTimeout(function () { Alarm.stopRing(); previewStopTimer = null; }, ms);
+  }
 
   // v0.6：所有窗口配置化。注入值仅作为旧构建/兜底，真实值以 state 为准。
   var isSettingsWindow = window.__DC_VIEW__ === 'settings';
@@ -716,12 +723,16 @@
       if (oc) oc.addEventListener('click', function () {
         var url = this.dataset.url;
         if (!url) return;
-        setUpdateStatus(I18n.t(STRINGS_LANG(), 'updateOneClickBusy'));
-        // 先打开安装包直链（浏览器开始下载），再退出当前时钟；
-        // 用户运行新安装包时本进程已不在，可避开 NSIS 旧的「关闭正在运行的工具」卡死。
-        Prefs.openUpdateInstaller(url)
-          .then(function () { return Prefs.quitApp(); })
-          .catch(function () { Prefs.quitApp().catch(function () {}); });
+        var L = STRINGS_LANG();
+        setUpdateStatus(I18n.t(L, 'updateAutoBusy'));
+        // v0.7.5: Rust 自动下载安装包 + 启动安装器 + 退出当前进程。
+        Prefs.autoUpdate(url)
+          .then(function () { setUpdateStatus(I18n.t(L, 'updateAutoDone')); })
+          .catch(function () {
+            // 自动更新失败：回退到下载页，明确提示用户手动安装。
+            setUpdateStatus(I18n.t(L, 'updateAutoFail'));
+            Prefs.openUrl('releases').catch(function () {});
+          });
       });
     })();
     (function () {
@@ -783,7 +794,7 @@
     })();
 
     // Alarm sound test
-    byId('alarm-test-sound').addEventListener('click', function () { Alarm.startRing(); setTimeout(function () { Alarm.stopRing(); }, 1600); });
+    byId('alarm-test-sound').addEventListener('click', function () { previewRing(1600); });
 
     // v0.5 铃声：预设选择 + 试听 + 自定义音频
     (function () {
@@ -793,7 +804,7 @@
         Alarm.setCurrentTone(v);
         changed({ alarmTone: v });
         syncAlarmToneUI();
-        if (v !== 'custom') Alarm.startRing(); setTimeout(function () { Alarm.stopRing(); }, 900);
+        if (v !== 'custom') previewRing(900);
       });
       byId('alarm-custom-pick').addEventListener('click', function () { byId('alarm-custom-file').click(); });
       byId('alarm-custom-file').addEventListener('change', function (e) {
@@ -807,7 +818,7 @@
             changed({ alarmTone: 'custom' });
             st.textContent = I18n.t(L, 'toneCustom');
             st.classList.add('ok');
-            Alarm.startRing(); setTimeout(function () { Alarm.stopRing(); }, 1200);
+            previewRing(1200);
           } else {
             st.textContent = I18n.t(L, 'alarmCustomTooBig');
             st.classList.remove('ok');
@@ -830,14 +841,27 @@
     // v0.5 多时区窗口管理器
     bindClockManager();
 
-    // Time sync
+    // Time sync —— v0.7.5: 只在设置窗口创建 interval，隐藏/失焦时停表。
     (function () {
       var clockLabel = byId('sync-clock');
+      var syncTickTimer = null;
       function tick() {
         if (!clockLabel) return;
         clockLabel.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       }
-      tick(); setInterval(tick, 1000);
+      function startSyncTick() {
+        if (syncTickTimer || !isSettingsWindow) return;
+        tick(); syncTickTimer = setInterval(tick, 1000);
+      }
+      function stopSyncTick() {
+        if (syncTickTimer) { clearInterval(syncTickTimer); syncTickTimer = null; }
+      }
+      startSyncTick();
+      window.addEventListener('focus', startSyncTick);
+      window.addEventListener('blur', stopSyncTick);
+      Prefs.listen('clock-visibility', function (v) {
+        if (isSettingsWindow) { if (v === false) stopSyncTick(); else startSyncTick(); }
+      });
     })();
     byId('sync-now').addEventListener('click', function () {
       var L = STRINGS_LANG();
@@ -981,10 +1005,12 @@
     state.alarms = remaining;
     Prefs.save({ alarms: remaining });
     renderAlarmList();
-    showAlarmToast(hits.map(function (a) { return a.time; }).join('、'));
+    var content = hits.map(function (a) { return String(a.note || '').trim(); })
+      .filter(function (s) { return !!s; }).join('\n');
+    showAlarmToast(hits.map(function (a) { return a.time; }).join('、'), content);
   }
 
-  // v0.7（未发布）：语音播报。只在主时钟窗口触发（与闹钟一致），按分钟去重；
+  // v0.7.0（已发布）：语音播报。只在主时钟窗口触发（与闹钟一致），按分钟去重；
   // 先播前导提示音（若选），再用 Web Speech API 读时间。
   function maybeAnnounce() {
     if (!state || !Announce || state.announceEnabled !== true) return;
@@ -997,7 +1023,7 @@
     Announce.speak(Announce.buildText(local, state), state);
   }
 
-  // v0.7（未发布）：填充语音下拉（保留当前选中；无语音时只留“跟随系统”）
+  // v0.7.0（已发布）：填充语音下拉（保留当前选中；无语音时只留“跟随系统”）
   function fillVoiceSelect(voice) {
     var sel = byId('pref-announce-voice');
     if (!sel || !Announce) return;
@@ -1017,7 +1043,7 @@
     sel.selectedIndex = idx;
   }
 
-  // v0.7（未发布）：指定时刻列表渲染 + 删除
+  // v0.7.0（已发布）：指定时刻列表渲染 + 删除
   function renderAnnounceTimes() {
     var box = byId('announce-time-list');
     if (!box) return;
@@ -1041,7 +1067,7 @@
     });
   }
 
-  // v0.7（未发布）：语音播报 UI 回显 + 联动显隐 + 支持状态提示
+  // v0.7.0（已发布）：语音播报 UI 回显 + 联动显隐 + 支持状态提示
   function syncAnnounceUI() {
     var en = byId('pref-announce-enabled');
     if (!en || !state) return;
@@ -1077,7 +1103,7 @@
     el.textContent = I18n.t(L, 'syncTzCurrent').replace('%s', name);
   }
 
-  function showAlarmToast(text) {
+  function showAlarmToast(text, content) {
     var toast = byId('alarm-toast');
     if (!toast) return;
     var L = STRINGS_LANG();
@@ -1098,6 +1124,8 @@
         kind: 'alarm',
         title: I18n.t(L, 'alarmRinging'),
         body: I18n.t(L, 'alarmMsg').replace('%s', text),
+        content: content || '',
+        seconds: seconds,
         note: I18n.t(L, 'alertAutoStop').replace('%s', String(seconds)),
         actions: actions, lang: L
       });
@@ -1137,6 +1165,11 @@
       var tagText = a.repeat ? (window.DeskClock.Schedule ? DeskClock.Schedule.summary(a.rule, L) : I18n.t(L, 'repDaily')) : I18n.t(L, 'repOnce');
       tag.textContent = tagText;
       info.appendChild(t); info.appendChild(tag);
+      if (a.note) {
+        var n = document.createElement('span');
+        n.className = 'alarm-note'; n.textContent = a.note;
+        info.appendChild(n);
+      }
       var btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'alarm-del'; btn.textContent = '×'; btn.title = I18n.t(L, 'alarmRemove');
       btn.addEventListener('click', function () {
@@ -1392,6 +1425,19 @@
       Prefs.setAutostart(wanted).then(function (actual) {
         state.autostart = actual; Prefs.save({ autostart: actual });
         byId('pref-autostart').checked = actual;
+        var st = byId('autostart-status');
+        if (st) { st.hidden = true; st.textContent = ''; }
+      }).catch(function () {
+        // v0.7.5: 写入/回读失败时绝不假装「已关闭」。重新读取系统真值，
+        // 并如实提示；旧实现会把 prefs 写回 false 造成状态相反。
+        Prefs.getAutostart().then(function (real) {
+          if (real !== null) {
+            state.autostart = real; Prefs.save({ autostart: real });
+            byId('pref-autostart').checked = real;
+          }
+        });
+        var st = byId('autostart-status');
+        if (st) { st.hidden = false; st.textContent = I18n.t(STRINGS_LANG(), 'autostartFail'); }
       });
     });
     byId('pref-clickthrough').addEventListener('change', function (e) { changed({ clickThrough: e.target.checked }); });
@@ -1490,8 +1536,12 @@
         rule.skipHolidays = byId('alarm-skip-holidays').checked;
       }
       var list = (state.alarms || []).slice();
-      list.push({ id: Alarm.newId(), time: v, repeat: true, rule: rule });
+      var noteEl = byId('alarm-note');
+      var note = noteEl ? String(noteEl.value || '').slice(0, 120) : '';
+      // v0.7.5: 一次性规则必须靠 repeat:false 在响后移除，否则会每天响。
+      list.push({ id: Alarm.newId(), time: v, repeat: mode !== 'once', rule: rule, note: note });
       changed({ alarms: list });
+      if (noteEl) noteEl.value = '';
       renderAlarmList();
       resetAlarmCustom();
     });
@@ -1507,7 +1557,7 @@
       changed({ timerWarnSeconds: Math.min(300, Math.max(5, Number(e.target.value) || 30)) });
     });
 
-    // v0.7（未发布）：语音播报 —— 总开关 / 声音 / 语速 / 音量 / 提示音 / 规则 / 间隔 / 指定时刻 / 免打扰
+    // v0.7.0（已发布）：语音播报 —— 总开关 / 声音 / 语速 / 音量 / 提示音 / 规则 / 间隔 / 指定时刻 / 免打扰
     (function () {
       byId('pref-announce-enabled').addEventListener('change', function (e) { changed({ announceEnabled: e.target.checked }); });
       byId('pref-announce-voice').addEventListener('change', function (e) { changed({ announceVoice: e.target.value }); });
@@ -1771,6 +1821,7 @@
 
     if (Prefs.isNative) {
       Prefs.getAutostart().then(function (actual) {
+        if (actual === null) return;   // 查询失败：保留已存值，不静默抹除用户勾选
         state.autostart = actual; Prefs.save({ autostart: actual });
         byId('pref-autostart').checked = actual;
       });
@@ -1781,8 +1832,20 @@
         else timerTarget = null;
         updateTimerUI();
       }).catch(function () { /* ignore */ });
-      // 启动时自动校时（仅主时钟窗口，避免多窗口重复触发）
-      if (state.autoTimeSync && !isSettingsWindow && !isExtraWindow) Prefs.syncSystemTime().catch(function () {});
+      // v0.7.5: 定时任务状态跨窗口同步 + 取消失败如实提示。
+      Prefs.listen('timer-state', function (p) {
+        if (!p) return;
+        timerTarget = p.active
+          ? { label: String(p.label || ''), action: p.action === 'reboot' ? 'reboot' : 'shutdown' }
+          : null;
+        updateTimerUI();
+      });
+      Prefs.listen('timer-cancelled', function () { timerTarget = null; updateTimerUI(); });
+      Prefs.listen('timer-cancel-failed', function () {
+        var st = byId('shutdown-status');
+        if (st) st.textContent = I18n.t(STRINGS_LANG(), 'timerCancelFailed');
+      });
+      // v0.7.5: 启动自动校时由 Rust setup() 统一执行一次，前端不再重复调用。
     }
     // 样式切换时同步「指针穿透」行的显示
     var styleSel = byId('pref-style');

@@ -150,6 +150,7 @@
             <label><span data-i18n="autostart">开机自启</span>
               <input id="pref-autostart" type="checkbox" class="dc-switch">
             </label>
+            <div id="autostart-status" class="field-note" data-dyn hidden></div>
             <label><span data-i18n="clickThrough">鼠标穿透</span>
               <input id="pref-clickthrough" type="checkbox" class="dc-switch">
             </label>
@@ -229,9 +230,14 @@
                   <option value="holidays" data-i18n="repHolidays">法定节假日</option>
                   <option value="trading" data-i18n="repTrading">A股交易日</option>
                   <option value="custom" data-i18n="repCustom">自定义</option>
+                  <option value="once" data-i18n="repOnce">一次性</option>
                 </select>
                 <button id="alarm-add" class="dc-btn tiny" type="button" data-i18n="alarmAdd">＋ 添加</button>
               </div>
+              <label class="alarm-note-row"><span data-i18n="alarmNote">提醒内容</span>
+                <input id="alarm-note" type="text" maxlength="120" class="dc-input" data-i18n-placeholder="alarmNotePlaceholder">
+              </label>
+              <div class="field-note" data-i18n="alarmNoteHint">选填；填写后闹钟响起时会在屏幕居中弹窗里显示这段文字，留空则不显示。</div>
               <div id="alarm-custom" class="alarm-custom" hidden>
                 <div class="alarm-weekdays" id="alarm-weekdays"></div>
                 <label class="inline"><input id="alarm-skip-holidays" type="checkbox" class="dc-switch"><span data-i18n="repSkipHolidays">排除法定节假日</span></label>
@@ -245,7 +251,7 @@
             <div id="alarm-list" class="alarm-list"></div>
           </div>
 
-          <!-- v0.7（未发布）：语音播报，默认关闭 -->
+          <!-- v0.7.0（已发布）：语音播报，默认关闭 -->
           <div class="card">
             <div class="card-title" data-i18n="announceTitle">语音播报</div>
             <label><span data-i18n="announceEnabled">启用语音播报</span>

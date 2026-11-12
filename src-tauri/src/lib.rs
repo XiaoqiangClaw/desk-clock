@@ -19,6 +19,14 @@ use std::sync::Mutex;
 /// Set by the tray "打赏支持" item. The settings window consumes it at boot,
 /// so the intent survives even when the window is created for the first time.
 static DONATE_INTENT: AtomicBool = AtomicBool::new(false);
+/// True once the user explicitly asked to quit. The global CloseRequested
+/// handler hides every window; without this flag app.exit() only hides them
+/// and the process keeps running (tray "quit" and the settings quit button
+/// both appeared to do nothing).
+static QUITTING: AtomicBool = AtomicBool::new(false);
+/// Last left-click on the tray icon. Only Windows emits a native
+/// DoubleClick event; on macOS we detect the second click ourselves.
+static LAST_TRAY_CLICK: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem};
@@ -76,7 +84,7 @@ pub struct Prefs {
     /// Windows only: request an elevated (administrator) process on every
     /// future launch, including autostart (RUNASADMIN compatibility layer).
     pub run_as_admin: bool,
-    // ---- v0.7 (unreleased): voice time announcement (default OFF) ----
+    // ---- v0.7.0 (released): voice time announcement (default OFF) ----
     /// Master switch; false = feature off (default).
     pub announce_enabled: bool,
     /// hourly | half | quarter | interval | custom.
@@ -103,6 +111,9 @@ pub struct Prefs {
     pub announce_include_date: bool,
     /// "" = follow the UI language; else "zh-CN" / "en".
     pub announce_lang: String,
+    /// v0.7.3: runtime calendar auto-sync switch (default ON). Without this
+    /// field, set_prefs / prefs-changed drop it and the UI switch never sticks.
+    pub calendar_auto_sync: bool,
     /// Physical pixels (as reported by tauri://move events).
     pub x: Option<f64>,
     pub y: Option<f64>,
@@ -139,7 +150,7 @@ impl Default for Prefs {
             auto_time_sync: false,
             extra_clocks: Vec::new(),
             run_as_admin: false,
-            // v0.7 (unreleased): voice time announcement — default OFF.
+            // v0.7.0 (released): voice time announcement — default OFF.
             announce_enabled: false,
             announce_rule: "hourly".into(),
             announce_interval: 30.0,
@@ -153,6 +164,7 @@ impl Default for Prefs {
             announce_quiet_end: "07:00".into(),
             announce_include_date: false,
             announce_lang: String::new(),
+            calendar_auto_sync: true,
             x: None,
             y: None,
         }
@@ -335,9 +347,16 @@ fn restart_elevated_now(app: &AppHandle) -> Result<(), String> {
     std::thread::spawn(move || {
         let ok = child.wait().map(|s| s.success()).unwrap_or(false);
         if ok {
-            handle.exit(0);
+            force_quit(handle.clone());
+        } else {
+            // v0.7.5: UAC 取消后单实例锁已被 destroy 且无法重新初始化。
+            // 启动一个普通权限副本重新持锁，再退出本进程，避免之后出现
+            // 两个进程同时跑托盘 / 闹钟 / 定时任务。
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = Command::new(exe).spawn();
+            }
+            force_quit(handle);
         }
-        // 取消授权：什么都不做，当前时钟照常运行；前端会自行恢复按钮状态。
     });
     Ok(())
 }
@@ -515,7 +534,9 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
 
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> Result<bool, String> {
-    Ok(app.autolaunch().is_enabled().unwrap_or(false))
+    // A read error must not be reported as "not enabled": that silently
+    // cleared the saved checkbox and desynced UI from the real system state.
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -583,7 +604,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock v0.7.4 · 设置")
+    .title("Desk Clock v0.7.5 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -620,7 +641,20 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    force_quit(app);
+}
+
+/// End the process for real. app.exit() alone is swallowed by the global
+/// CloseRequested handler (every window answers with prevent_close + hide),
+/// so the tray "退出" item and the settings quit button used to do nothing.
+fn force_quit(app: AppHandle) {
+    QUITTING.store(true, Ordering::SeqCst);
     app.exit(0);
+    // Fallback: if the event loop did not terminate, end the process anyway.
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        std::process::exit(0);
+    });
 }
 
 #[tauri::command]
@@ -698,7 +732,7 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock v0.7.4 · {}", label))
+    .title(format!("Desk Clock v0.7.5 · {}", label))
     // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
     .inner_size(
         cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
@@ -987,9 +1021,25 @@ fn get_window_configs(app: AppHandle, state: State<'_, PrefsState>) -> Result<se
     Ok(read_clocks(&app, &legacy))
 }
 
+/// v0.7.5: 统一的窗口 id 消毒。只允许 main 或短字母数字 id，
+/// 避免受损 WebView 用任意字符串制造幻影窗口配置。
+fn sanitize_clock_id(id: &str) -> Result<String, String> {
+    if id == "main" {
+        return Ok("main".into());
+    }
+    if !id.is_empty()
+        && id.len() <= 32
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Ok(id.to_string());
+    }
+    Err("invalid clock id".into())
+}
+
 /// 设置窗口切换「当前编辑目标」并持久化。
 #[tauri::command]
 fn set_active_clock(app: AppHandle, state: State<'_, PrefsState>, id: String) -> Result<(), String> {
+    let id = sanitize_clock_id(&id)?;
     let legacy = state.0.lock().map_err(|e| e.to_string())?.clone();
     let mut all = read_clocks(&app, &legacy);
     if let Some(o) = all.as_object_mut() {
@@ -1001,6 +1051,7 @@ fn set_active_clock(app: AppHandle, state: State<'_, PrefsState>, id: String) ->
 /// 单个窗口的完整配置（时钟窗口启动 / 设置窗口读取目标时用）。
 #[tauri::command]
 fn get_window_prefs(app: AppHandle, state: State<'_, PrefsState>, id: String) -> Result<serde_json::Value, String> {
+    let id = sanitize_clock_id(&id)?;
     let legacy = state.0.lock().map_err(|e| e.to_string())?.clone();
     let mut all = read_clocks(&app, &legacy);
     let cfg = ensure_clock_cfg(&mut all, &id);
@@ -1016,12 +1067,22 @@ fn set_window_prefs(
     id: String,
     patch: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    let id = sanitize_clock_id(&id)?;
+    // v0.7.5: patch 字段白名单，防止受损 WebView 往 clocks.json 写任意字段。
+    const ALLOWED: &[&str] = &[
+        "name", "tzOffset", "tzLabel", "style", "showSeconds", "showSeparator",
+        "hour12", "alwaysOnTop", "clickThrough", "scale", "opacity", "font",
+        "customFont", "color", "customColor", "analogTheme", "analogPenetrate",
+        "backdrop", "visible", "x", "y", "w", "h",
+    ];
     let legacy = state.0.lock().map_err(|e| e.to_string())?.clone();
     let mut all = read_clocks(&app, &legacy);
     let mut cfg = ensure_clock_cfg(&mut all, &id);
     if let (Some(obj), Some(p)) = (cfg.as_object_mut(), patch.as_object()) {
         for (k, v) in p {
-            obj.insert(k.clone(), v.clone());
+            if ALLOWED.contains(&k.as_str()) {
+                obj.insert(k.clone(), v.clone());
+            }
         }
     }
     if let Some(clocks) = all.get_mut("clocks").and_then(|c| c.as_object_mut()) {
@@ -1069,6 +1130,18 @@ fn set_window_geometry(
     w: Option<f64>,
     h: Option<f64>,
 ) -> Result<(), String> {
+    let id = sanitize_clock_id(&id)?;
+    // v0.7.5: 拒绝 NaN / 无穷 / 越界几何参数。
+    for v in [x, y, scale, w, h].into_iter().flatten() {
+        if !v.is_finite() || v.abs() > 100_000.0 {
+            return Err("invalid window geometry".into());
+        }
+    }
+    if let Some(sc) = scale {
+        if sc <= 0.0 || sc > 5.0 {
+            return Err("invalid scale".into());
+        }
+    }
     let win_label = if id == "main" { "main".to_string() } else { format!("clock-{}", id) };
     let win = app
         .get_webview_window(&win_label)
@@ -1119,6 +1192,7 @@ fn preset_position_for(
     id: String,
     pos: String,
 ) -> Result<(f64, f64), String> {
+    let id = sanitize_clock_id(&id)?;
     let win_label = if id == "main" { "main".to_string() } else { format!("clock-{}", id) };
     let win = app
         .get_webview_window(&win_label)
@@ -1219,11 +1293,139 @@ fn open_link(kind: String) -> Result<(), String> {
 /// URL 必须由前端从本项目 Releases 资源列表中取出；这里只放行本项目 release 直链，避免任意 URL 打开。
 #[tauri::command]
 fn open_update_installer(url: String) -> Result<(), String> {
-    let prefix = "https://github.com/xiaoqiangclub/desk-clock/releases/download/";
-    if !url.starts_with(prefix) {
-        return Err("invalid update asset url".into());
-    }
+    validate_update_url(&url)?;
     shell_open(&url)
+}
+
+/// v0.7.5: 严格校验更新包直链。旧实现只做 starts_with(prefix)，会放行
+/// 同前缀下的任意路径甚至非安装包资产。这里限定：本项目 release 下载路径
+/// + 合法 vX.Y.Z tag + 已知安装包后缀 + 无路径穿越。
+fn validate_update_url(url: &str) -> Result<String, String> {
+    let prefix = "https://github.com/xiaoqiangclub/desk-clock/releases/download/";
+    let rest = url
+        .strip_prefix(prefix)
+        .ok_or_else(|| "invalid update asset url".to_string())?;
+    let mut parts = rest.split('/');
+    let tag = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    if tag.is_empty() || name.is_empty() || parts.next().is_some() {
+        return Err("invalid update asset path".into());
+    }
+    let mut tc = tag.chars();
+    if tc.next() != Some('v') || !tc.all(|c| c.is_ascii_digit() || c == '.') {
+        return Err("invalid update tag".into());
+    }
+    let allowed = [
+        ".exe", ".msi", ".dmg", ".app.tar.gz", ".AppImage", ".deb", ".rpm",
+    ];
+    if !allowed.iter().any(|s| name.ends_with(s))
+        || name.contains("..")
+        || name.contains('\\')
+        || name.contains('/')
+    {
+        return Err("invalid update asset name".into());
+    }
+    Ok(name.to_string())
+}
+
+/// 用系统 curl 下载到临时目录（Windows 10+/macOS/Linux 均自带，零新 Rust 依赖）。
+/// 任何失败都返回 Err，由前端回退到「打开下载页 + 提示手动安装」。
+fn download_update(url: &str, name: &str) -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join("desk-clock-update");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dest = dir.join(name);
+    let _ = fs::remove_file(&dest);
+    let out = Command::new("curl")
+        .args([
+            "-fL",
+            "--retry",
+            "2",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            "600",
+            "--silent",
+            "--show-error",
+            "-o",
+        ])
+        .arg(&dest)
+        .arg(url)
+        .output()
+        .map_err(|e| format!("curl unavailable: {}", e))?;
+    if !out.status.success() {
+        let _ = fs::remove_file(&dest);
+        return Err(format!(
+            "download failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let len = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    if len < 1024 * 1024 {
+        let _ = fs::remove_file(&dest);
+        return Err("download too small (not an installer)".into());
+    }
+    Ok(dest)
+}
+
+#[cfg(target_os = "windows")]
+fn launch_installer(path: &PathBuf) -> Result<(), String> {
+    let name = path.to_string_lossy();
+    let mut cmd = if name.ends_with(".msi") {
+        let mut c = Command::new("msiexec");
+        c.args(["/i"]).arg(path).args(["/passive", "/norestart"]);
+        c
+    } else {
+        let mut c = Command::new(path);
+        c.arg("/S"); // NSIS 静默安装
+        c
+    };
+    cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launch_installer(path: &PathBuf) -> Result<(), String> {
+    Command::new("open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn launch_installer(path: &PathBuf) -> Result<(), String> {
+    let name = path.to_string_lossy();
+    if name.ends_with(".AppImage") {
+        let _ = Command::new("chmod").args(["+x"]).arg(path).status();
+        Command::new(path).spawn().map_err(|e| e.to_string())?;
+    } else {
+        // deb / rpm 交给系统包管理器打开，不做静默提权。
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn launch_installer(_path: &PathBuf) -> Result<(), String> {
+    Err("unsupported platform".into())
+}
+
+/// v0.7.5 一键更新：自动下载 + 启动安装器 + 退出当前进程。
+/// 失败时返回 Err，前端负责打开 releases 页面并提示手动安装。
+#[tauri::command]
+fn auto_update(app: AppHandle, url: String) -> Result<String, String> {
+    let name = validate_update_url(&url)?;
+    let dest = download_update(&url, &name)?;
+    launch_installer(&dest)?;
+    // 让 IPC 先把成功结果返回给前端，再退出；否则前端只会看到通道中断。
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        force_quit(app);
+    });
+    Ok(dest.to_string_lossy().into_owned())
 }
 
 // ------------------------------------------------------------- system time
@@ -1281,11 +1483,69 @@ fn sync_system_time() -> Result<String, String> {
 
 // --------------------------------------------------------------------- tray
 
+/// Show / hide the settings window from a tray double click (or the menu
+/// fallback on platforms that emit no tray click events at all).
+fn toggle_settings_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("settings") {
+        if win.is_visible().unwrap_or(true) {
+            let _ = win.hide();
+        } else {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+        return;
+    }
+    // Building a window inside a synchronous tray handler deadlocks on Windows.
+    let h = app.clone();
+    std::thread::spawn(move || {
+        let _ = ensure_settings_window(&h, None);
+    });
+}
+
+/// 2 = native double click (Windows only), 1 = plain left click, 0 = ignore.
+fn tray_event_kind(event: TrayIconEvent) -> u8 {
+    match event {
+        TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        } => 2,
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } => 1,
+        _ => 0,
+    }
+}
+
+/// macOS has no native DoubleClick event, so treat two left clicks within
+/// 400 ms as one. Linux emits no tray events at all (upstream limitation) —
+/// the "显示 / 隐藏设置" menu item is the fallback there.
+fn second_click_within(max_ms: u64) -> bool {
+    let now = std::time::Instant::now();
+    let mut last = LAST_TRAY_CLICK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let hit = last
+        .map(|t| now.duration_since(t) < std::time::Duration::from_millis(max_ms))
+        .unwrap_or(false);
+    *last = if hit { None } else { Some(now) };
+    hit
+}
+
 fn build_tray(app: &AppHandle) -> Result<(), String> {
     let show_i = MenuItem::with_id(app, "show", "显示时钟", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let settings_i = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)
         .map_err(|e| e.to_string())?;
+    let toggle_settings_i = MenuItem::with_id(
+        app,
+        "toggle_settings",
+        "显示 / 隐藏设置",
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
     let unclick_i = MenuItem::with_id(app, "unclick", "恢复鼠标（关闭穿透）", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let update_i = MenuItem::with_id(app, "update", "检查更新", true, None::<&str>)
@@ -1298,6 +1558,7 @@ fn build_tray(app: &AppHandle) -> Result<(), String> {
     let menu = Menu::new(app).map_err(|e| e.to_string())?;
     menu.append(&show_i).map_err(|e| e.to_string())?;
     menu.append(&settings_i).map_err(|e| e.to_string())?;
+    menu.append(&toggle_settings_i).map_err(|e| e.to_string())?;
     menu.append(&unclick_i).map_err(|e| e.to_string())?;
     menu.append(&update_i).map_err(|e| e.to_string())?;
     menu.append(&donate_i).map_err(|e| e.to_string())?;
@@ -1306,7 +1567,9 @@ fn build_tray(app: &AppHandle) -> Result<(), String> {
     let mut builder = TrayIconBuilder::with_id("desk-clock-tray")
         .menu(&menu)
         .tooltip("Desk Clock · 桌面时钟")
-        .show_menu_on_left_click(true);
+        // Left click must reach on_tray_icon_event so a double click can
+        // toggle settings. Right-click menus are unaffected by this flag.
+        .show_menu_on_left_click(false);
     if let Some(icon) = app.default_window_icon() {
         let owned =
             tauri::image::Image::new_owned(icon.rgba().to_vec(), icon.width(), icon.height());
@@ -1410,6 +1673,16 @@ fn schedule_timer(
     let act = if action == "reboot" { "reboot" } else { "shutdown" };
     let mode = if warn_mode.as_deref() == Some("silent") { "silent" } else { "popup" };
     let ahead = warn_seconds.unwrap_or(30.0).max(5.0).min(300.0);
+    // v0.7.5: 已有任务时先撤销旧的 OS 计划并作废旧提醒线程，
+    // 避免重载 / 多窗口 / 旧计划残留导致重复关机。
+    {
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        if guard.info.is_some() {
+            let _ = os_cancel();
+            guard.info = None;
+            guard.generation = guard.generation.wrapping_add(1);
+        }
+    }
     os_schedule(seconds, act == "reboot")?;
     let generation = {
         let mut guard = state.0.lock().map_err(|e| e.to_string())?;
@@ -1423,6 +1696,10 @@ fn schedule_timer(
     patch_prefs(&app, "timerAction", serde_json::json!(act));
     patch_prefs(&app, "timerWarnMode", serde_json::json!(mode));
     patch_prefs(&app, "timerWarnSeconds", serde_json::json!(ahead));
+    let _ = app.emit(
+        "timer-state",
+        serde_json::json!({ "active": true, "action": act, "label": label }),
+    );
     if mode == "popup" {
         let app2 = app.clone();
         let act2 = act.to_string();
@@ -1454,12 +1731,17 @@ fn schedule_timer(
 }
 
 fn cancel_timer_inner(app: &AppHandle, state: &State<'_, TimerState>) -> Result<(), String> {
-    os_cancel()?;
-    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    guard.info = None;
-    guard.generation = guard.generation.wrapping_add(1);
+    // v0.7.5: 先执行 OS 取消，但无论成败都清本地状态并广播，
+    // 避免「UI 显示已终止、系统关机仍会执行」或状态卡死。
+    let result = os_cancel();
+    {
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        guard.info = None;
+        guard.generation = guard.generation.wrapping_add(1);
+    }
     let _ = app.emit("timer-cancelled", ());
-    Ok(())
+    let _ = app.emit("timer-state", serde_json::json!({ "active": false }));
+    result
 }
 
 #[tauri::command]
@@ -1501,6 +1783,8 @@ fn get_shutdown_status(state: State<'_, TimerState>) -> Result<Option<String>, S
 #[tauri::command]
 fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("alert") {
+        // Schedule before emit(): emit() takes payload by value.
+        schedule_alert_autoclose(&app, &payload);
         let _ = app.emit("alert-payload", payload);
         let _ = win.show();
         let _ = win.set_focus();
@@ -1515,11 +1799,15 @@ fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> 
         "alert",
         WebviewUrl::App(PathBuf::from("alert.html")),
     )
-    .title("Desk Clock v0.7.4 · 提醒")
-    .inner_size(360.0, 220.0)
+    .title("Desk Clock v0.7.5 · 提醒")
+    .inner_size(360.0, 260.0)
     .resizable(false)
     .decorations(false)
-    .transparent(true)
+    // v0.7.5: an opaque window is mandatory. A transparent WebView can fail
+    // to paint (WebView2 / WKWebView / WebKitGTK), leaving an invisible,
+    // always-on-top 360x220 rectangle in the screen centre that swallows
+    // every click until the process is killed. Never make this transparent.
+    .transparent(false)
     .shadow(false)
     .always_on_top(true)
     .skip_taskbar(true)
@@ -1527,7 +1815,29 @@ fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> 
     .initialization_script(init.as_str())
     .build()
     .map_err(|e| e.to_string())?;
+    schedule_alert_autoclose(&app, &payload);
     Ok(())
+}
+
+/// Hard safety net: even if the frontend ring timer never fires (JS paused,
+/// main window hidden, ...), the alert window must not stay on screen forever.
+/// close() really closes it now because CloseRequested lets the "alert" label
+/// through instead of hiding it.
+fn schedule_alert_autoclose(app: &AppHandle, payload: &serde_json::Value) {
+    let secs = payload
+        .get("seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30)
+        .min(600)
+        .max(5)
+        + 10;
+    let h = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+        if let Some(win) = h.get_webview_window("alert") {
+            let _ = win.close();
+        }
+    });
 }
 
 #[tauri::command]
@@ -1546,7 +1856,14 @@ fn alert_action(
     kind: String,
 ) -> Result<(), String> {
     if action == "terminate" && kind == "timer" {
-        let _ = cancel_timer_inner(&app, &state);
+        // 取消失败时绝不广播 terminate（否则 UI 显示已终止但系统仍会关机）。
+        if let Err(e) = cancel_timer_inner(&app, &state) {
+            let _ = app.emit("timer-cancel-failed", serde_json::json!({ "error": e }));
+            if let Some(win) = app.get_webview_window("alert") {
+                let _ = win.close();
+            }
+            return Err(e);
+        }
     }
     let _ = app.emit(
         "alert-action",
@@ -1637,7 +1954,7 @@ pub fn run() {
             // NSIS 安装器通过单实例通道请求优雅退出，避免 RestartManager 的
             // WM_CLOSE 被「关窗隐藏到托盘」拦截后无法自动关闭运行中的工具。
             if args.iter().any(|a| a == "--dc-exit-for-install") {
-                app.exit(0);
+                force_quit(app.clone());
                 return;
             }
             let _ = show_main_now(app);
@@ -1656,6 +1973,18 @@ pub fn run() {
             let prefs = read_prefs(handle);
             app.manage(PrefsState(Mutex::new(prefs.clone())));
             app.manage(TimerState(Mutex::new(TimerSnapshot::default())));
+            // v0.7.5: 重装 / 换安装路径 / 用户手动删掉启动项后自愈。
+            // prefs.autostart 记录的是用户在应用里的意图；系统里被关掉时
+            // 重新注册一次。用户在应用里主动关闭时 prefs 会写成 false，
+            // 因此不会违背用户意图强行打开。
+            if prefs.autostart {
+                let mgr = handle.autolaunch();
+                if !mgr.is_enabled().unwrap_or(false) {
+                    if let Err(e) = mgr.enable() {
+                        eprintln!("Desk Clock: autostart re-enable failed: {}", e);
+                    }
+                }
+            }
 
             {
                 let mut all = read_clocks(handle, &prefs);
@@ -1703,11 +2032,30 @@ pub fn run() {
             Ok(())
         })
         // Any window close hides that window instead of quitting the process.
-        // Only the tray "退出" item calls app.exit().
+        // Exceptions: an explicit quit, and the alert popup — the latter MUST
+        // really close, otherwise it stays as an invisible click-swallowing
+        // rectangle in the screen centre until the process is restarted.
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if QUITTING.load(Ordering::SeqCst) || window.label() == "alert" {
+                        return;
+                    }
+                    api.prevent_close();
+                    let _ = window.hide();
+                    // Tauri hide() 不触发 document.hidden；定向通知该窗口停表。
+                    let label = window.label().to_string();
+                    let _ = window
+                        .app_handle()
+                        .emit_to(label.as_str(), "clock-visibility", false);
+                }
+                tauri::WindowEvent::Focused(true) => {
+                    let label = window.label().to_string();
+                    let _ = window
+                        .app_handle()
+                        .emit_to(label.as_str(), "clock-visibility", true);
+                }
+                _ => {}
             }
         })
         .on_menu_event(|app, event| {
@@ -1721,6 +2069,9 @@ pub fn run() {
                     std::thread::spawn(move || {
                         let _ = ensure_settings_window(&h, None);
                     });
+                }
+                "toggle_settings" => {
+                    toggle_settings_window(app);
                 }
                 "unclick" => {
                     for (label, win) in app.webview_windows() {
@@ -1754,18 +2105,21 @@ pub fn run() {
                         let _ = h.emit("show-donate", ());
                     });
                 }
-                "quit" => app.exit(0),
+                "quit" => force_quit(app.clone()),
                 _ => {}
             }
         })
         .on_tray_icon_event(|app, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let _ = show_main_now(app);
+            match tray_event_kind(event) {
+                2 => toggle_settings_window(app),
+                1 => {
+                    if second_click_within(400) {
+                        toggle_settings_window(app);
+                    } else {
+                        let _ = show_main_now(app);
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1797,6 +2151,7 @@ pub fn run() {
             preset_position_for,
             open_link,
             open_update_installer,
+            auto_update,
             sync_system_time,
             schedule_timer,
             cancel_timer,

@@ -159,17 +159,17 @@ check("app.js renders calendar status", "renderCalSyncStatus" in app)
 check("app.js binds manual check", "cal-sync-now" in app)
 check("app.js binds auto-sync toggle", "pref-cal-autosync" in app)
 
-# --- A9. 版本一致性 0.7.4 ---
+# --- A9. 版本一致性 0.7.5 ---
 ver_sources = {
-    "ui/app.js": "var APP_VERSION = '0.7.4';",
-    "src-tauri/Cargo.toml": 'version = "0.7.4"',
-    "src-tauri/tauri.conf.json": '"version": "0.7.4"',
+    "ui/app.js": "var APP_VERSION = '0.7.5';",
+    "src-tauri/Cargo.toml": 'version = "0.7.5"',
+    "src-tauri/tauri.conf.json": '"version": "0.7.5"',
 }
 for p, needle in ver_sources.items():
-    check("version 0.7.4 in " + p, needle in rd(p))
+    check("version 0.7.5 in " + p, needle in rd(p))
 lib = rd("src-tauri/src/lib.rs")
-check("lib.rs native titles all v0.7.4 (3)",
-      len(re.findall(r"Desk Clock v0\.7\.4", lib)) == 3,
+check("lib.rs native titles all v0.7.5 (3)",
+      len(re.findall(r"Desk Clock v0\.7\.5", lib)) == 3,
       len(re.findall(r"Desk Clock v0\.7\.4", lib)))
 check("no stale 0.7.3 in version declarations",
       "var APP_VERSION = '0.7.3'" not in rd("ui/app.js")
@@ -179,14 +179,14 @@ check("no stale 0.7.3 in version declarations",
 # --- A10. 文档 ---
 readme, changelog, spec = rd("README.md"), rd("CHANGELOG.md"), rd("docs/SPEC.md")
 check("README mentions calendar auto-update", "自动更新" in readme and "交易日" in readme)
-check("README documents v0.7.4", "v0.7.4" in readme)
+check("README documents v0.7.5", "v0.7.5" in readme)
 check("README documents coverage-driven sync", "覆盖驱动" in readme)
 check("README documents every-version fresh built-in data", "内置最新" in readme or "发版" in readme)
-check("CHANGELOG has v0.7.4 section", "v0.7.4" in changelog)
+check("CHANGELOG has v0.7.4 and v0.7.5 sections", "v0.7.4" in changelog and "v0.7.5" in changelog)
 check("CHANGELOG documents covered-driven + mirror fallback", "覆盖驱动" in changelog or "临期" in changelog)
 check("SPEC documents CalendarSync / auto-detect", "CalendarSync" in spec and "自动" in spec)
 check("SPEC documents coverage-driven decision", "覆盖驱动" in spec or "临期" in spec)
-check("release.yml body targets v0.7.4", "## 🕐 Desk Clock v0.7.4" in rels)
+check("release.yml body targets v0.7.5", "## 🕐 Desk Clock v0.7.5" in rels)
 check("release body mentions coverage-driven + fresh built-in", "覆盖驱动" in rels and "内置" in rels)
 by = rd(".github/workflows/build.yml")
 check("build.yml static checks include calendar-sync.js + .json",
@@ -251,6 +251,8 @@ ck('decide: 跨年且数据未更新 -> expired(自愈)', CS._decide(D('2028-01-
 ck('decide: 跨年且已拿到2028 -> local', CS._decide(D('2028-01-01'), [2024,2025,2026,2027,2028]) === 'local');
 ck('decide: 次年覆盖内平日 -> local', CS._decide(D('2028-06-01'), [2024,2025,2026,2027,2028]) === 'local');
 ck('decide: 无覆盖数据 -> expired', CS._decide(D('2026-03-01'), []) === 'expired');
+ck('decide: 当前年不在覆盖内 -> expired (年份空洞自愈)',
+   CS._decide(D('2026-06-15'), [2027,2028]) === 'expired');
 // 阈值必须晚于 11 月上旬发布日：早触发必然空转
 ck('prefetch threshold is December (after Nov notice)', CS._decide(D('2027-06-01'), COV) === 'local');
 
@@ -264,6 +266,24 @@ ck('validateData rejects non-array h', !S.validateData({years:{'2028':{h:'x',w:[
 ck('validateData rejects empty years', !S.validateData({years:{}}));
 ck('validateData rejects absurd year count (>40)',
    !S.validateData({years:Object.fromEntries(Array.from({length:41},(_,i)=>[String(2000+i),{h:[],w:[]}]))}));
+// v0.7.5 新增：年份连续性 / MMdd 真实性 / coverage 一致性
+ck('validateData rejects year gap',
+   !S.validateData({years:{'2024':{h:[],w:[]},'2026':{h:[],w:[]}}}));
+ck('validateData rejects impossible MMdd 0230',
+   !S.validateData({years:{'2028':{h:['0230'],w:[]}}}));
+ck('validateData rejects invalid MMdd 9999',
+   !S.validateData({years:{'2028':{h:['9999'],w:[]}}}));
+ck('validateData accepts leap day 0229 in leap year',
+   S.validateData({years:{'2028':{h:['0229'],w:[]}}}));
+ck('validateData rejects 0229 in non-leap year',
+   !S.validateData({years:{'2027':{h:['0229'],w:[]}}}));
+ck('validateData rejects coverage/years mismatch',
+   !S.validateData({years:{'2028':{h:[],w:[]}},coverage:['2024']}));
+// v0.7.5 新增：一次性规则不再被归一化成每天
+ck('normalizeRule keeps once (no daily fallback)',
+   S.normalizeRule({mode:'once'}).mode === 'once');
+ck('matches(once) false (handled by repeat:false removal)',
+   S.matches({mode:'once'}, new Date()) === false);
 
 // ---- setData: 接受超集 / 拒绝回退 ----
 const newer = JSON.parse(JSON.stringify(BUILTIN));
@@ -297,6 +317,7 @@ let events = 0;
 CS.onChange(()=>{ events++; });
 const evenNewer = JSON.parse(JSON.stringify(newer));
 evenNewer.years['2029'] = { h:['0101'], w:[] };
+evenNewer.coverage = ['2024','2025','2026','2027','2028','2029'];
 let ar = CS._applyRemote(evenNewer, 'remote');
 ck('_applyRemote accepts valid newer data', ar.ok === true, ar);
 ck('_applyRemote extended coverage to 2029', JSON.stringify(S.coverage()).indexOf('2029') >= 0);

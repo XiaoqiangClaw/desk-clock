@@ -6,9 +6,12 @@
 <title>Desk Clock · 提醒</title>
 <link rel="icon" href="data:,">
 <style>
+  [hidden] { display: none !important; }
   html, body {
     margin: 0; padding: 0; width: 100%; height: 100%;
-    background: transparent; overflow: hidden;
+    /* v0.7.5: 不透明兜底。透明 WebView 若绘制失败，会留下一个看不见、
+       却永远置顶并吞掉鼠标点击的矩形；不透明底色保证弹窗一定可见。 */
+    background: #181a1f; overflow: hidden;
     font: 12.5px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
     color: #f2f3f5; user-select: none; -webkit-user-select: none;
   }
@@ -26,6 +29,11 @@
   }
   .head button:hover { opacity: 1; }
   .body { margin: 10px 0 6px; font-size: 13px; }
+  .content {
+    margin: 8px 0 2px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(255,255,255,.07); font-size: 13px; line-height: 1.45;
+    white-space: pre-wrap; word-break: break-word; max-height: 88px; overflow: auto;
+  }
   .note { font-size: 10.5px; color: #9aa1ad; min-height: 0; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }
   .actions button {
@@ -43,6 +51,7 @@
   <div class="card" id="card">
     <div class="head"><span id="title">提醒</span><button id="close" type="button" aria-label="关闭">&times;</button></div>
     <div class="body" id="body"></div>
+    <div class="content" id="content" hidden></div>
     <div class="note" id="note"></div>
     <div class="actions" id="actions"></div>
   </div>
@@ -68,6 +77,10 @@
     document.getElementById('title').textContent = payload.title || '';
     document.getElementById('body').textContent = payload.body || '';
     document.getElementById('note').textContent = payload.note || '';
+    var c = document.getElementById('content');
+    var txt = payload.content || '';
+    c.textContent = txt;
+    c.hidden = !txt;
     var box = document.getElementById('actions');
     box.textContent = '';
     (payload.actions || []).forEach(function (a) {

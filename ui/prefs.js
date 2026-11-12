@@ -32,7 +32,7 @@
     extraClocks: [],           // v0.5: [{id,label,offset,style,showSeconds,visible}] 窗口管理器
     tzOffset: null,            // v0.6: 每窗口时区偏移（分钟，null=本机时间）
     tzLabel: '',               // v0.6: 每窗口时区显示名
-    // v0.7（未发布）：语音播报（默认关闭）
+    // v0.7.0（已发布）：语音播报（默认关闭）
     announceEnabled: false,
     announceRule: 'hourly',
     announceInterval: 30,
@@ -58,6 +58,13 @@
   var COLORS = ['', '__custom__'];
   var TONES = ['gentle', 'bell', 'tick', 'rise', 'chord', 'custom'];
   var CLOCK_STYLES = ['flip', 'minimal', 'neon', 'eink', 'segment', 'typewriter', 'glass', 'analog'];
+  var BACKDROPS = ['none', 'blur', 'dim', 'light'];
+
+  // v0.7.5: 真正的 HH:MM 校验（小时 0-23、分钟 0-59），不只是两位数格式。
+  function validHM(s) {
+    return typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+  }
+  function num(v) { return typeof v === 'number' && isFinite(v); }
   var STORAGE_KEY = 'deskclock.prefs';
   var CLOCKS_KEY = 'deskclock.clocks';
   var isNative = !!window.__TAURI__;
@@ -74,7 +81,7 @@
   var GLOBAL_KEYS = ['lang', 'alarms', 'alarmSound', 'alarmTone', 'alarmRingSeconds',
     'timerAction', 'timerMode', 'timerWarnMode', 'timerWarnSeconds',
     'autoTimeSync', 'autostart', 'runAsAdmin', 'extraClocks',
-    // v0.7（未发布）：语音播报全局项
+    // v0.7.0（已发布）：语音播报全局项
     'announceEnabled', 'announceRule', 'announceInterval', 'announceTimes',
     'announceVoice', 'announceRate', 'announceVolume', 'announceChime',
     'announceQuiet', 'announceQuietStart', 'announceQuietEnd',
@@ -104,20 +111,20 @@
   function normalize(obj) {
     var out = clone(DEFAULTS);
     if (!obj || typeof obj !== 'object') return out;
-    if (typeof obj.style === 'string' && obj.style) out.style = obj.style;
-    if (typeof obj.backdrop === 'string' && obj.backdrop) out.backdrop = obj.backdrop;
+    if (CLOCK_STYLES.indexOf(obj.style) >= 0) out.style = obj.style;
+    if (BACKDROPS.indexOf(obj.backdrop) >= 0) out.backdrop = obj.backdrop;
     if (obj.lang === 'en' || obj.lang === 'zh-CN') out.lang = obj.lang;
     ['showSeconds', 'hour12', 'showSeparator', 'alwaysOnTop', 'autostart',
      'analogPenetrate', 'clickThrough', 'alarmSound', 'autoTimeSync', 'runAsAdmin',
-     // v0.7（未发布）：语音播报开关类
+     // v0.7.0（已发布）：语音播报开关类
      'announceEnabled', 'announceQuiet', 'announceIncludeDate',
      // v0.7.3：日历自动同步开关
      'calendarAutoSync'
     ].forEach(function (k) {
       if (obj[k] !== undefined) out[k] = !!obj[k];
     });
-    if (isFinite(obj.scale)) out.scale = Math.min(2.5, Math.max(0.5, Number(obj.scale)));
-    if (isFinite(obj.opacity)) out.opacity = Math.min(1, Math.max(0.3, Number(obj.opacity)));
+    if (num(obj.scale)) out.scale = Math.min(2.5, Math.max(0.5, obj.scale));
+    if (num(obj.opacity)) out.opacity = Math.min(1, Math.max(0.3, obj.opacity));
     // NOTE: global isFinite(null) === true. Guard with an explicit typeof check
     // or a fresh install would be persisted as x:0,y:0 and the window would
     // jump to the top-left corner instead of staying centered.
@@ -136,13 +143,13 @@
     if (obj.analogTheme === 'dark' || obj.analogTheme === 'light') out.analogTheme = obj.analogTheme;
     if (obj.timerAction === 'shutdown' || obj.timerAction === 'reboot') out.timerAction = obj.timerAction;
     if (obj.timerMode === 'duration' || obj.timerMode === 'clock') out.timerMode = obj.timerMode;
-    if (isFinite(obj.alarmRingSeconds)) out.alarmRingSeconds = Math.min(600, Math.max(5, Math.round(Number(obj.alarmRingSeconds))));
-    if (isFinite(obj.timerWarnSeconds)) out.timerWarnSeconds = Math.min(300, Math.max(5, Math.round(Number(obj.timerWarnSeconds))));
+    if (num(obj.alarmRingSeconds)) out.alarmRingSeconds = Math.min(600, Math.max(5, Math.round(obj.alarmRingSeconds)));
+    if (num(obj.timerWarnSeconds)) out.timerWarnSeconds = Math.min(300, Math.max(5, Math.round(obj.timerWarnSeconds)));
     if (obj.timerWarnMode === 'popup' || obj.timerWarnMode === 'silent') out.timerWarnMode = obj.timerWarnMode;
     if (TONES.indexOf(obj.alarmTone) >= 0) out.alarmTone = obj.alarmTone;
     if (Array.isArray(obj.alarms)) {
       out.alarms = obj.alarms.filter(function (a) {
-        return a && typeof a.time === 'string' && /^[0-9]{2}:[0-9]{2}$/.test(a.time);
+        return a && validHM(a.time);
       }).slice(0, 20).map(function (a) {
         var rule = (window.DeskClock && window.DeskClock.Schedule)
           ? window.DeskClock.Schedule.fromLegacy(a.repeat, a.rule)
@@ -151,13 +158,15 @@
           id: String(a.id || ('a' + Math.random().toString(36).slice(2, 9))),
           time: a.time,
           repeat: !!a.repeat,
-          rule: rule
+          rule: rule,
+          // v0.7.5: 每条闹钟可带一段提醒内容；留空表示不显示。
+          note: (typeof a.note === 'string') ? a.note.slice(0, 120) : ''
         };
       });
     }
     if (Array.isArray(obj.extraClocks)) {
       out.extraClocks = obj.extraClocks.filter(function (c) {
-        return c && typeof c.label === 'string' && isFinite(c.offset);
+        return c && typeof c.label === 'string' && num(c.offset);
       }).slice(0, 8).map(function (c) {
         return {
           id: String(c.id || ('c' + Math.random().toString(36).slice(2, 9))),
@@ -170,21 +179,23 @@
         };
       });
     }
-    // v0.7（未发布）：语音播报字段白名单 + 类型钳制
+    // v0.7.5：语音播报字段白名单 + 类型钳制（英文播报已移除）
     if (['hourly', 'half', 'quarter', 'interval', 'custom'].indexOf(obj.announceRule) >= 0) out.announceRule = obj.announceRule;
     if (typeof obj.announceVoice === 'string') out.announceVoice = obj.announceVoice.slice(0, 256);
-    if (['zh-CN', 'en', ''].indexOf(obj.announceLang) >= 0) out.announceLang = obj.announceLang;
+    // 旧的 'en' 值一律收敛为空，避免残留配置触发无声的英文播报。
+    if (obj.announceLang === 'zh-CN') out.announceLang = 'zh-CN';
+    else out.announceLang = '';
     if (['none', 'gentle', 'bell', 'tick', 'rise', 'chord'].indexOf(obj.announceChime) >= 0) out.announceChime = obj.announceChime;
     if (typeof obj.announceRate === 'number' && isFinite(obj.announceRate)) out.announceRate = Math.min(2, Math.max(0.5, obj.announceRate));
     if (typeof obj.announceVolume === 'number' && isFinite(obj.announceVolume)) out.announceVolume = Math.min(1, Math.max(0, obj.announceVolume));
     if (typeof obj.announceInterval === 'number' && isFinite(obj.announceInterval)) out.announceInterval = Math.min(120, Math.max(5, Math.round(obj.announceInterval)));
-    if (/^([01]\d|2[0-3]):[0-5]\d$/.test(obj.announceQuietStart || '')) out.announceQuietStart = obj.announceQuietStart;
+    if (validHM(obj.announceQuietStart)) out.announceQuietStart = obj.announceQuietStart;
     else if (obj.announceQuietStart) out.announceQuietStart = DEFAULTS.announceQuietStart;
-    if (/^([01]\d|2[0-3]):[0-5]\d$/.test(obj.announceQuietEnd || '')) out.announceQuietEnd = obj.announceQuietEnd;
+    if (validHM(obj.announceQuietEnd)) out.announceQuietEnd = obj.announceQuietEnd;
     else if (obj.announceQuietEnd) out.announceQuietEnd = DEFAULTS.announceQuietEnd;
     if (Array.isArray(obj.announceTimes)) {
       out.announceTimes = obj.announceTimes
-        .filter(function (t) { return t && typeof t.time === 'string' && /^\d{2}:\d{2}$/.test(t.time); })
+        .filter(function (t) { return t && validHM(t.time); })
         .slice(0, 20)
         .map(function (t) { return { id: String(t.id || ('an' + Math.random().toString(36).slice(2, 9))), time: t.time }; });
     }
@@ -240,16 +251,27 @@
   // 且 g 未显式提供的窗口项一律走默认值，避免上一轮 clocks 残留污染。
   function hydrate(globalObj, winObj) {
     var merged = normalize(globalObj), k;
-    for (k in winObj) if (Object.prototype.hasOwnProperty.call(winObj, k)) merged[k] = winObj[k];
+    // v0.7.5: 每窗口配置只接受白名单字段，合并后整体重新消毒，
+    // 避免 clocks.json 里损坏/多余字段污染内存与后续持久化。
+    var w = {};
+    if (winObj && typeof winObj === 'object') {
+      for (k = 0; k < WINDOW_KEYS.length; k++) {
+        var key = WINDOW_KEYS[k];
+        if (Object.prototype.hasOwnProperty.call(winObj, key)) w[key] = winObj[key];
+      }
+      for (k in w) if (Object.prototype.hasOwnProperty.call(w, k)) merged[k] = w[k];
+    }
+    var safe = normalize(merged);
     if (!isNative) {
       // 浏览器预览/回归里 localStorage(prefs) 是权威：g 里显式写的窗口项覆盖 w；
       // g 未写的窗口项保留 w（clocks.json 模拟）的值，避免冲掉真实窗口配置。
+      var g = normalize(globalObj);
       for (k = 0; k < WINDOW_KEYS.length; k++) {
-        var key = WINDOW_KEYS[k];
-        if (globalObj && Object.prototype.hasOwnProperty.call(globalObj, key)) merged[key] = globalObj[key];
+        var key2 = WINDOW_KEYS[k];
+        if (globalObj && Object.prototype.hasOwnProperty.call(globalObj, key2)) safe[key2] = g[key2];
       }
     }
-    return merged;
+    return safe;
   }
 
   function load() {
@@ -432,16 +454,16 @@
     if (!isNative) return Promise.resolve(false);
     return invoke('get_autostart', undefined)
       .then(function (v) { return !!v; })
-      .catch(function () { return false; });
+      // null = 查询失败，区别于「系统确实未启用」的 false。
+      .catch(function () { return null; });
   }
 
   function setAutostart(enabled) {
     if (!isNative) return Promise.resolve(!!enabled);
     return invoke('set_autostart', { enabled: !!enabled })
-      .then(function (res) { return res === undefined || res === null ? !!enabled : !!res; })
-      // 关键修复：命令失败时如实返回 false，绝不再「假成功」掩盖真实错误
-      // （Tauri v2 在 capabilities 未授权或注册表写入异常时命令会 reject）。
-      .catch(function () { return false; });
+      .then(function (res) { return res === undefined || res === null ? !!enabled : !!res; });
+    // v0.7.5：失败必须冒泡。旧实现吞成 false 会写回 prefs 并把开关弹回，
+    // 造成「系统其实已启用、界面却显示关闭」。由 app.js 重新读取系统真值。
   }
 
   // ------------------------------------------------ cross-window sync / extras
@@ -484,7 +506,12 @@
       if (!isSettingsWindow && id !== selfId) return;
       if (isSettingsWindow && id !== targetId) return;
       var w = payload.prefs || {}, k;
-      for (k in w) if (Object.prototype.hasOwnProperty.call(w, k)) current[k] = w[k];
+      // v0.7.5: 跨窗口广播同样只接受窗口项白名单，且值经过消毒。
+      var safe = normalize(w);
+      for (k = 0; k < WINDOW_KEYS.length; k++) {
+        var key = WINDOW_KEYS[k];
+        if (Object.prototype.hasOwnProperty.call(w, key)) current[key] = safe[key];
+      }
       cb(clone(current));
     });
   }
@@ -605,8 +632,10 @@
     if (isMac) return first('.dmg') || first('.app.tar.gz');
     return first('.appimage') || first('.deb') || first('.rpm'); // Linux
   }
-  // 一键更新：打开新版本安装包直链（Rust 仅放行本项目 release 直链）
+  // 一键更新（旧）：打开新版本安装包直链，仅作兼容保留。
   function openUpdateInstaller(url) { return invoke('open_update_installer', { url: url }); }
+  // v0.7.5：自动更新 —— Rust 下载 + 启动安装器 + 退出；失败时前端回退手动下载。
+  function autoUpdate(url) { return invoke('auto_update', { url: url }); }
   function addClockWindow(id, label, offset, style, showSeconds, visible) {
     return invoke('add_clock_window', {
       id: id, label: label, offset: offset,
@@ -655,6 +684,7 @@
     syncSystemTime: syncSystemTime,
     checkUpdate: checkUpdate,
     openUpdateInstaller: openUpdateInstaller,
+    autoUpdate: autoUpdate,
     openUrl: openUrl,
     addClockWindow: addClockWindow,
     closeClockWindow: closeClockWindow,

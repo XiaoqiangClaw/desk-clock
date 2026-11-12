@@ -87,6 +87,9 @@
   function decide(today, coverage) {
     var y = today.getFullYear();
     var maxY = (coverage && coverage.length) ? coverage[coverage.length - 1] : (y - 1);
+    // v0.7.5: 当前年份必须在覆盖集合里。旧实现只看最大覆盖年，遇到年份
+    // 空洞（或只有更晚的末年）会误判为「覆盖内零联网」，节假日规则退化。
+    if (!coverage || coverage.indexOf(y) < 0) return 'expired';
     if (y > maxY) return 'expired';                                  // 跨年，内置表已过期 → 自愈
     if (y === maxY && today.getMonth() >= PREFETCH_MONTH) return 'prefetch'; // 12 月起预取次年
     return 'local';                                                 // 覆盖内且未临期 → 零联网
