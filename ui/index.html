@@ -151,6 +151,14 @@
               <input id="pref-autostart" type="checkbox" class="dc-switch">
             </label>
             <div id="autostart-status" class="field-note" data-dyn hidden></div>
+            <!-- v0.7.6：让主人能亲眼看到 Windows 注册表的真实状态并一键修复 -->
+            <div class="diag-row">
+              <button id="autostart-diag-btn" class="dc-btn tiny ghost" type="button"
+                      data-i18n="autostartDiagBtn">检测开机自启状态</button>
+              <button id="autostart-repair-btn" class="dc-btn tiny" type="button"
+                      data-i18n="autostartRepairBtn">一键修复</button>
+            </div>
+            <pre id="autostart-diag" class="diag-box" hidden></pre>
             <label><span data-i18n="clickThrough">鼠标穿透</span>
               <input id="pref-clickthrough" type="checkbox" class="dc-switch">
             </label>

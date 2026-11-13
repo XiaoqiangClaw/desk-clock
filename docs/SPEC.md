@@ -179,7 +179,7 @@
   `verify.py` 31 + `verify_announce.py` 77 + `verify_calendar_sync.py` 138 +
   `verify_features.py` 60 + `verify_v03.py` 35 + `verify_v04.py` 60 +
   `verify_v05.py` 55 + `verify_v06.py` 22 + `verify_v061.py` 30 +
-  `verify_v062.py` 34 + `verify_v063.py` 33 = **575 项通过**（v0.7.5 工作区基线）。
+  `verify_v062.py` 34 + `verify_v063.py` 33 = **575 项通过**（v0.7.6 工作区基线）。
 - 浏览器打开 `ui/index.html`：默认 flip 风格能显示当前时间、逐秒翻页、无黑底无边框；8 风格均正常渲染。
 - 多窗口：每个窗口各自渲染自己的样式/颜色/时区/显示秒；切换编辑目标不串配置；
   两个独立页面均只注册窗口作用域 `onMoved`、无全局 `tauri://move` 监听。

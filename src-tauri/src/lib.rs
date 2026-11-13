@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Set by the tray "打赏支持" item. The settings window consumes it at boot,
@@ -24,6 +24,9 @@ static DONATE_INTENT: AtomicBool = AtomicBool::new(false);
 /// and the process keeps running (tray "quit" and the settings quit button
 /// both appeared to do nothing).
 static QUITTING: AtomicBool = AtomicBool::new(false);
+/// v0.7.6: generation counter for alert auto-close. A reused popup must not
+/// be closed by the stale timer of a PREVIOUS alarm.
+static ALERT_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Last left-click on the tray icon. Only Windows emits a native
 /// DoubleClick event; on macOS we detect the second click ourselves.
 static LAST_TRAY_CLICK: Mutex<Option<std::time::Instant>> = Mutex::new(None);
@@ -289,13 +292,13 @@ fn set_admin_compat(enabled: bool) -> Result<(), String> {
     let key = r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
     let value = exe.as_os_str();
     let result = if enabled {
-        Command::new("reg")
+        reg_command()
             .args(["add", key, "/v"])
             .arg(value)
             .args(["/t", "REG_SZ", "/d", "RUNASADMIN", "/f"])
             .output()
     } else {
-        Command::new("reg")
+        reg_command()
             .args(["delete", key, "/v"])
             .arg(value)
             .arg("/f")
@@ -312,6 +315,144 @@ fn set_admin_compat(enabled: bool) -> Result<(), String> {
 #[cfg(not(target_os = "windows"))]
 fn set_admin_compat(_enabled: bool) -> Result<(), String> {
     Ok(())
+}
+
+// ------------------------------------------------------- Windows autostart
+
+/// Windows Run value name. The autostart plugin uses `package_info().name`,
+/// i.e. the Cargo package name "desk-clock".
+#[cfg(target_os = "windows")]
+const WIN_RUN_APP_NAME: &str = "desk-clock";
+#[cfg(target_os = "windows")]
+const WIN_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(target_os = "windows")]
+const WIN_RUN_KEY_HKLM: &str = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(target_os = "windows")]
+const WIN_APPCOMPAT_LAYERS_KEY: &str =
+    r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
+
+/// `reg.exe` without flashing a console window in a GUI app.
+#[cfg(target_os = "windows")]
+fn reg_command() -> Command {
+    use std::os::windows::process::CommandExt;
+    let mut c = Command::new("reg");
+    // CREATE_NO_WINDOW
+    c.creation_flags(0x0800_0000);
+    c
+}
+
+/// v0.7.6: fix the upstream `auto-launch 0.6.0` Windows defect.
+///
+/// Its `enable_with_root_key()` writes
+/// `format!("{} {}", app_path, args.join(" "))` WITHOUT quoting app_path.
+/// Any install path containing a space (`C:\Program Files\...`, a user name
+/// with a space, ...) makes Windows parse `C:\Program` as the executable and
+/// silently skip the app at logon. Worse, `is_enabled()` only checks that
+/// the value EXISTS, so the UI happily reports "enabled" while nothing ever
+/// starts — exactly the "autostart still fails" symptom.
+///
+/// After the plugin's enable() we overwrite the Run value with a properly
+/// quoted absolute path and read it back to verify.
+#[cfg(target_os = "windows")]
+fn repair_windows_run_value() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let value = format!("\"{}\" --startup", exe.display());
+    // The plugin uses WindowsEnableMode::Dynamic: when the app runs elevated
+    // it writes HKLM (which Windows also executes at logon). Repair that one
+    // too when writable, otherwise the unquoted HKLM entry stays broken.
+    let hklm = reg_command()
+        .args(["query", WIN_RUN_KEY_HKLM, "/v", WIN_RUN_APP_NAME])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if hklm {
+        let _ = reg_command()
+            .args(["add", WIN_RUN_KEY_HKLM, "/v", WIN_RUN_APP_NAME, "/t", "REG_SZ", "/d"])
+            .arg(&value)
+            .arg("/f")
+            .output();
+    }
+    let out = reg_command()
+        .args(["add", WIN_RUN_KEY, "/v", WIN_RUN_APP_NAME, "/t", "REG_SZ", "/d"])
+        .arg(&value)
+        .arg("/f")
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let q = reg_command()
+        .args(["query", WIN_RUN_KEY, "/v", WIN_RUN_APP_NAME])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&q.stdout).to_string();
+    if !text.contains(&format!("\"{}\"", exe.display())) {
+        return Err(format!("Run value read-back mismatch: {}", text.trim()));
+    }
+    Ok(value)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn repair_windows_run_value() -> Result<String, String> {
+    Ok(String::new())
+}
+
+/// Read the real Windows state back, so the user can SEE why autostart
+/// fails instead of guessing. Never mutates anything.
+#[cfg(target_os = "windows")]
+fn windows_autostart_probe() -> serde_json::Value {
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let query = |key: &str, name: &str| -> Option<String> {
+        reg_command()
+            .args(["query", key, "/v", name])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    };
+    let run = query(WIN_RUN_KEY, WIN_RUN_APP_NAME)
+        .or_else(|| query(WIN_RUN_KEY_HKLM, WIN_RUN_APP_NAME));
+    let registered = run.is_some();
+    let run_text = run.unwrap_or_default();
+    let quoted = run_text.contains(&format!("\"{}\"", exe));
+    let matches = run_text.contains(&exe);
+    let layers = query(WIN_APPCOMPAT_LAYERS_KEY, &exe);
+    let elevated_compat = layers.as_ref().map(|s| s.contains("RUNASADMIN")).unwrap_or(false);
+    let approved = query(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+        WIN_RUN_APP_NAME,
+    );
+    // Enabled entries start with 02/06; Task Manager writes 03/01/00... when
+    // the user disables an item. Report the raw hex instead of guessing when
+    // reg.exe output cannot be parsed, so the UI never shows a false verdict.
+    let approved_hex = approved
+        .as_ref()
+        .and_then(|s| s.split_whitespace().last().map(|v| v.to_string()))
+        .unwrap_or_default();
+    let disabled_by_task_manager = !approved_hex.is_empty()
+        && !approved_hex.starts_with("02")
+        && !approved_hex.starts_with("06");
+    // Compute before `exe` is moved into the JSON value below.
+    let exe_exists = !exe.is_empty() && std::path::Path::new(&exe).exists();
+    serde_json::json!({
+        "platform": "windows",
+        "exeExists": exe_exists,
+        "exePath": exe,
+        "runValue": run_text.trim(),
+        "registered": registered,
+        "pathQuoted": quoted,
+        "pathMatchesExe": matches,
+        "runAsAdminCompat": elevated_compat,
+        "disabledByTaskManager": disabled_by_task_manager,
+        "startupApprovedHex": approved_hex
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_autostart_probe() -> serde_json::Value {
+    serde_json::json!({ "platform": std::env::consts::OS, "supported": false })
 }
 
 /// Ask Windows for an elevated copy, then terminate this one.
@@ -516,6 +657,12 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     let mgr = app.autolaunch();
     if enabled {
         mgr.enable().map_err(|e| e.to_string())?;
+        // v0.7.6: the plugin writes an UNQUOTED exe path into the Run value.
+        // Repair it immediately (and verify by reading back), otherwise any
+        // install path containing a space silently breaks logon startup while
+        // is_enabled() still says "on".
+        #[cfg(target_os = "windows")]
+        repair_windows_run_value()?;
     } else {
         mgr.disable().map_err(|e| e.to_string())?;
     }
@@ -537,6 +684,44 @@ fn get_autostart(app: AppHandle) -> Result<bool, String> {
     // A read error must not be reported as "not enabled": that silently
     // cleared the saved checkbox and desynced UI from the real system state.
     app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// v0.7.6: expose the REAL OS state for the "autostart still fails" case.
+/// Returns the registry command, whether the path is quoted / points at this
+/// very executable, whether a RUNASADMIN compat layer will trigger UAC at
+/// logon, and whether Task Manager disabled the entry.
+#[tauri::command]
+fn get_autostart_diagnostics(app: AppHandle) -> Result<serde_json::Value, String> {
+    let mut v = windows_autostart_probe();
+    if let Some(o) = v.as_object_mut() {
+        o.insert(
+            "pluginEnabled".into(),
+            serde_json::json!(app.autolaunch().is_enabled().unwrap_or(false)),
+        );
+        o.insert(
+            "savedIntent".into(),
+            serde_json::json!(read_prefs(&app).autostart),
+        );
+    }
+    Ok(v)
+}
+
+/// One-click repair: re-register through the plugin, then overwrite the Run
+/// value with a quoted absolute path and read it back. Used by the settings
+/// "修复开机自启" button and by the startup self-heal path.
+#[tauri::command]
+fn repair_autostart(app: AppHandle) -> Result<serde_json::Value, String> {
+    let mgr = app.autolaunch();
+    // disable() first so a stale/unquoted value cannot survive.
+    let _ = mgr.disable();
+    mgr.enable().map_err(|e| e.to_string())?;
+    let value = repair_windows_run_value()?;
+    let mut v = windows_autostart_probe();
+    if let Some(o) = v.as_object_mut() {
+        o.insert("pluginEnabled".into(), serde_json::json!(mgr.is_enabled().unwrap_or(false)));
+        o.insert("repairedCommand".into(), serde_json::json!(value));
+    }
+    Ok(v)
 }
 
 #[tauri::command]
@@ -604,7 +789,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock v0.7.5 · 设置")
+    .title("Desk Clock v0.7.6 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -732,7 +917,7 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock v0.7.5 · {}", label))
+    .title(format!("Desk Clock v0.7.6 · {}", label))
     // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
     .inner_size(
         cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
@@ -1780,42 +1965,79 @@ fn get_shutdown_status(state: State<'_, TimerState>) -> Result<Option<String>, S
 
 /// v0.6.2: 独立、屏幕居中的提醒窗口（闹钟 / 定时任务提前提醒）。
 /// 用独立静态页 `alert.html` 渲染，无 drag-region，按钮必然可点。
+///
+/// 🔴 v0.7.6 真根因修复（前两版改透明/尺寸/超时都没打中）：
+/// 官方 `docs.rs/tauri::webview::WebviewWindowBuilder::build` 明确写着
+/// "On Windows, this function deadlocks when used in a synchronous command
+///  or event handlers ... You should use async commands and separate threads
+///  when creating windows."。旧实现是【同步命令里直接 build()】，Windows
+///  主线程自己等自己 → 死锁：弹窗根本没被创建，IPC 也不返回，界面永远不出现。
+/// 项目里 `add_clock_window` / `ensure_settings_window` 早就用独立线程规避，
+/// 唯独这里漏了。现在改成 async 命令 + std::thread::spawn 双保险，立即返回。
 #[tauri::command]
-fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> {
+async fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), String> {
+    schedule_alert_autoclose(&app, &payload);
     if let Some(win) = app.get_webview_window("alert") {
         // Schedule before emit(): emit() takes payload by value.
-        schedule_alert_autoclose(&app, &payload);
         let _ = app.emit("alert-payload", payload);
         let _ = win.show();
         let _ = win.set_focus();
         return Ok(());
     }
-    let init = format!(
-        "window.__DC_ALERT__={};",
-        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".into())
-    );
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        "alert",
-        WebviewUrl::App(PathBuf::from("alert.html")),
-    )
-    .title("Desk Clock v0.7.5 · 提醒")
-    .inner_size(360.0, 260.0)
-    .resizable(false)
-    .decorations(false)
-    // v0.7.5: an opaque window is mandatory. A transparent WebView can fail
-    // to paint (WebView2 / WKWebView / WebKitGTK), leaving an invisible,
-    // always-on-top 360x220 rectangle in the screen centre that swallows
-    // every click until the process is killed. Never make this transparent.
-    .transparent(false)
-    .shadow(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .center()
-    .initialization_script(init.as_str())
-    .build()
-    .map_err(|e| e.to_string())?;
-    schedule_alert_autoclose(&app, &payload);
+    let h = app.clone();
+    std::thread::spawn(move || {
+        // 无状态并发保护：建窗前再查一次。同一分钟多个闹钟同时命中时，
+        // 后到线程若发现窗口已被前一个建好，就只更新内容，不抢建同名窗口。
+        if let Some(existing) = h.get_webview_window("alert") {
+            let _ = h.emit("alert-payload", payload.clone());
+            let _ = existing.show();
+            let _ = existing.set_focus();
+            return;
+        }
+        let init = format!(
+            "window.__DC_ALERT__={};",
+            serde_json::to_string(&payload).unwrap_or_else(|_| "{}".into())
+        );
+        let built = tauri::WebviewWindowBuilder::new(
+            &h,
+            "alert",
+            WebviewUrl::App(PathBuf::from("alert.html")),
+        )
+        .title("Desk Clock v0.7.6 · 提醒")
+        .inner_size(360.0, 260.0)
+        .resizable(false)
+        .decorations(false)
+        // v0.7.5: an opaque window is mandatory. A transparent WebView can fail
+        // to paint, leaving an invisible always-on-top rectangle that swallows
+        // every click. Never make this transparent.
+        .transparent(false)
+        .shadow(false)
+        .visible(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .center()
+        .initialization_script(init.as_str())
+        .build();
+        match built {
+            Ok(win) => {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+            Err(e) => {
+                // 竞态：另一个线程刚抢先建好同名窗口 → 不是失败，更新内容即可。
+                if let Some(existing) = h.get_webview_window("alert") {
+                    let _ = h.emit("alert-payload", payload.clone());
+                    let _ = existing.show();
+                    let _ = existing.set_focus();
+                    return;
+                }
+                eprintln!("Desk Clock: alert window build failed: {}", e);
+                // 兜底：原生窗口真建不出来时，通知主窗口显示页内提醒层，
+                // 保证用户至少能看到内容、能手动停止闹铃。
+                let _ = h.emit("alert-build-failed", serde_json::json!({ "error": e.to_string() }));
+            }
+        }
+    });
     Ok(())
 }
 
@@ -1831,9 +2053,14 @@ fn schedule_alert_autoclose(app: &AppHandle, payload: &serde_json::Value) {
         .min(600)
         .max(5)
         + 10;
+    let generation = ALERT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let h = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(secs));
+        // A newer alert reused this window: leave it open, its own timer wins.
+        if ALERT_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
         if let Some(win) = h.get_webview_window("alert") {
             let _ = win.close();
         }
@@ -1984,6 +2211,12 @@ pub fn run() {
                         eprintln!("Desk Clock: autostart re-enable failed: {}", e);
                     }
                 }
+                // v0.7.6: even when the entry EXISTS it may be broken (unquoted
+                // path / stale install location). Always rewrite + verify it on
+                // startup so a reboot actually launches this executable.
+                if let Err(e) = repair_windows_run_value() {
+                    eprintln!("Desk Clock: autostart Run value repair failed: {}", e);
+                }
             }
 
             {
@@ -2131,6 +2364,8 @@ pub fn run() {
             set_click_through,
             set_autostart,
             get_autostart,
+            get_autostart_diagnostics,
+            repair_autostart,
             get_privilege_status,
             set_run_as_admin,
             restart_elevated,

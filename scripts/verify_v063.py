@@ -45,9 +45,9 @@ conf = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="u
 nsis = conf.get("bundle", {}).get("windows", {}).get("nsis", {})
 check("bundle.windows.nsis.installerHooks == ./windows/hooks.nsh",
       nsis.get("installerHooks") == "./windows/hooks.nsh", nsis.get("installerHooks"))
-check("tauri.conf.json version is 0.7.5", conf.get("version") == "0.7.5", conf.get("version"))
-check("main window title is Desk Clock v0.7.5",
-      conf["app"]["windows"][0].get("title") == "Desk Clock v0.7.5",
+check("tauri.conf.json version is 0.7.6", conf.get("version") == "0.7.6", conf.get("version"))
+check("main window title is Desk Clock v0.7.6",
+      conf["app"]["windows"][0].get("title") == "Desk Clock v0.7.6",
       conf["app"]["windows"][0].get("title"))
 check("bundle.active/targets/icon unchanged",
       conf["bundle"].get("active") is True
@@ -74,18 +74,18 @@ check("CloseRequested hides to tray but lets quit / alert close for real",
       "api.prevent_close();" in lib and "let _ = window.hide();" in lib
       and "QUITTING.load(Ordering::SeqCst)" in lib
       and 'window.label() == "alert"' in lib)
-check("lib.rs native titles all v0.7.5",
-      len(re.findall(r"Desk Clock v0\.7\.5", lib)) == 3
+check("lib.rs native titles all v0.7.6",
+      len(re.findall(r"Desk Clock v0\.7\.6", lib)) == 3
       and "Desk Clock v0.6.3" not in lib,
-      len(re.findall(r"Desk Clock v0\.7\.5", lib)))
+      len(re.findall(r"Desk Clock v0\.7\.6", lib)))
 
 # ===== 4. version consistency (4 places) =====
 cargo = (ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
 appjs = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
-check("Cargo.toml version 0.7.5", 'version = "0.7.5"' in cargo)
-check("ui/app.js APP_VERSION 0.7.5", "var APP_VERSION = '0.7.5';" in appjs)
-check("verify_v04.py version assertion 0.7.5",
-      'version badge shows 0.7.5' in (ROOT / "scripts" / "verify_v04.py").read_text(encoding="utf-8"))
+check("Cargo.toml version 0.7.6", 'version = "0.7.6"' in cargo)
+check("ui/app.js APP_VERSION 0.7.6", "var APP_VERSION = '0.7.6';" in appjs)
+check("verify_v04.py version assertion 0.7.6",
+      'version badge shows 0.7.6' in (ROOT / "scripts" / "verify_v04.py").read_text(encoding="utf-8"))
 check("no stale 0.6.3 in version sources",
       all("0.6.3" not in (ROOT / p).read_text(encoding="utf-8")
           for p in ("src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "scripts/verify_v04.py")))

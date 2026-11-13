@@ -159,17 +159,17 @@ check("app.js renders calendar status", "renderCalSyncStatus" in app)
 check("app.js binds manual check", "cal-sync-now" in app)
 check("app.js binds auto-sync toggle", "pref-cal-autosync" in app)
 
-# --- A9. 版本一致性 0.7.5 ---
+# --- A9. 版本一致性 0.7.6 ---
 ver_sources = {
-    "ui/app.js": "var APP_VERSION = '0.7.5';",
-    "src-tauri/Cargo.toml": 'version = "0.7.5"',
-    "src-tauri/tauri.conf.json": '"version": "0.7.5"',
+    "ui/app.js": "var APP_VERSION = '0.7.6';",
+    "src-tauri/Cargo.toml": 'version = "0.7.6"',
+    "src-tauri/tauri.conf.json": '"version": "0.7.6"',
 }
 for p, needle in ver_sources.items():
-    check("version 0.7.5 in " + p, needle in rd(p))
+    check("version 0.7.6 in " + p, needle in rd(p))
 lib = rd("src-tauri/src/lib.rs")
-check("lib.rs native titles all v0.7.5 (3)",
-      len(re.findall(r"Desk Clock v0\.7\.5", lib)) == 3,
+check("lib.rs native titles all v0.7.6 (3)",
+      len(re.findall(r"Desk Clock v0\.7\.6", lib)) == 3,
       len(re.findall(r"Desk Clock v0\.7\.4", lib)))
 check("no stale 0.7.3 in version declarations",
       "var APP_VERSION = '0.7.3'" not in rd("ui/app.js")
@@ -179,15 +179,20 @@ check("no stale 0.7.3 in version declarations",
 # --- A10. 文档 ---
 readme, changelog, spec = rd("README.md"), rd("CHANGELOG.md"), rd("docs/SPEC.md")
 check("README mentions calendar auto-update", "自动更新" in readme and "交易日" in readme)
-check("README documents v0.7.5", "v0.7.5" in readme)
+check("README documents v0.7.6", "v0.7.6" in readme)
 check("README documents coverage-driven sync", "覆盖驱动" in readme)
 check("README documents every-version fresh built-in data", "内置最新" in readme or "发版" in readme)
 check("CHANGELOG has v0.7.4 and v0.7.5 sections", "v0.7.4" in changelog and "v0.7.5" in changelog)
 check("CHANGELOG documents covered-driven + mirror fallback", "覆盖驱动" in changelog or "临期" in changelog)
 check("SPEC documents CalendarSync / auto-detect", "CalendarSync" in spec and "自动" in spec)
 check("SPEC documents coverage-driven decision", "覆盖驱动" in spec or "临期" in spec)
-check("release.yml body targets v0.7.5", "## 🕐 Desk Clock v0.7.5" in rels)
-check("release body mentions coverage-driven + fresh built-in", "覆盖驱动" in rels and "内置" in rels)
+check("release.yml body targets v0.7.6", "## 🕐 Desk Clock v0.7.6" in rels)
+# v0.7.6: release body was rewritten to document the two real root-cause
+# fixes. Keep a meaningful assertion on the NEW body instead of a stale
+# string from the v0.7.4 calendar release.
+check("release body documents v0.7.6 popup + autostart root causes",
+      "真根因" in rels and "独立线程" in rels
+      and "引号" in rels and "诊断面板" in rels)
 by = rd(".github/workflows/build.yml")
 check("build.yml static checks include calendar-sync.js + .json",
       "node --check ui/calendar-sync.js" in by and "json.load(open('ui/calendar-data.json'))" in by)

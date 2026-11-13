@@ -452,6 +452,15 @@ v0.6.2：必须给所有子元素 no-drag，否则 #app 的 drag region 会吞�
 .alarm-note-row .dc-input { flex: 1 1 auto; }
 .alarm-note { display: block; font-size: 11px; color: var(--s-dim); margin-top: 2px; word-break: break-all; }
 
+/* v0.7.6：开机自启诊断区 */
+.diag-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px; }
+.diag-box {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 170px; overflow: auto;
+  background: rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px; font: 11px/1.55 ui-monospace, Consolas, monospace;
+  color: var(--s-dim); white-space: pre-wrap; word-break: break-all;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

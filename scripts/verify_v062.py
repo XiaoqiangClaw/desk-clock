@@ -145,8 +145,8 @@ with sync_playwright() as pw:
     boot(page, SETTINGS_INIT)
 
     # ===== A: version + title + header =====
-    check("APP_VERSION is 0.7.5", "v0.7.5" in page.locator("#ver-badge").inner_text())
-    check("settings window title contains version", "v0.7.5" in page.evaluate("document.title"))
+    check("APP_VERSION is 0.7.6", "v0.7.6" in page.locator("#ver-badge").inner_text())
+    check("settings window title contains version", "v0.7.6" in page.evaluate("document.title"))
     lb = page.locator("#head-target label").bounding_box()
     badge = page.locator("#ver-badge").bounding_box()
     check("editing selector is next to the blue dot / version badge",
@@ -220,7 +220,7 @@ with sync_playwright() as pw:
     cw = cctx.new_page()
     cw.on("pageerror", lambda e: errors.append("clock: " + str(e)))
     boot(cw, CLOCK_INIT)
-    check("clock view title contains version", "v0.7.5" in cw.evaluate("document.title"),
+    check("clock view title contains version", "v0.7.6" in cw.evaluate("document.title"),
           cw.evaluate("document.title"))
     geo = cw.evaluate("window.__dc_geometry || null")
     check("set_window_geometry receives measured w/h",

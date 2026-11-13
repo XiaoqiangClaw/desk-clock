@@ -466,6 +466,16 @@
     // 造成「系统其实已启用、界面却显示关闭」。由 app.js 重新读取系统真值。
   }
 
+  // v0.7.6：把 Windows 注册表的真实状态暴露给设置页，不再靠猜。
+  function autostartDiagnostics() {
+    if (!isNative) return Promise.resolve(null);
+    return invoke('get_autostart_diagnostics').catch(function () { return null; });
+  }
+  function repairAutostart() {
+    if (!isNative) return Promise.resolve(null);
+    return invoke('repair_autostart');
+  }
+
   // ------------------------------------------------ cross-window sync / extras
 
   function listen(event, cb) {
@@ -671,6 +681,8 @@
     showAlert: showAlert, closeAlert: closeAlert,
     getAutostart: getAutostart,
     setAutostart: setAutostart,
+    autostartDiagnostics: autostartDiagnostics,
+    repairAutostart: repairAutostart,
     onChanged: onChanged,
     listen: listen,
     privilegeStatus: privilegeStatus,

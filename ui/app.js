@@ -16,7 +16,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.7.5';
+  var APP_VERSION = '0.7.6';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -81,6 +81,7 @@
   var editingClockId = null; // v0.5: 管理器正在编辑的窗口 id
   var ringTimeout = null;    // v0.6.2: 闹钟响铃自动停止计时器
   var previewStopTimer = null; // v0.7.5: 铃声试听停止计时器（避免旧 timeout 误停新铃声）
+  var lastAlertPayload = null;  // v0.7.6: 原生提醒窗建不出来时的页内兜底数据
 
   function previewRing(ms) {
     if (previewStopTimer) { clearTimeout(previewStopTimer); previewStopTimer = null; }
@@ -1120,7 +1121,7 @@
         { action: 'terminate', label: I18n.t(L, 'alarmStop') },
         { action: 'dismiss', label: I18n.t(L, 'alarmDismiss') }
       ];
-      Prefs.showAlert({
+      var payload = {
         kind: 'alarm',
         title: I18n.t(L, 'alarmRinging'),
         body: I18n.t(L, 'alarmMsg').replace('%s', text),
@@ -1128,7 +1129,9 @@
         seconds: seconds,
         note: I18n.t(L, 'alertAutoStop').replace('%s', String(seconds)),
         actions: actions, lang: L
-      });
+      };
+      lastAlertPayload = payload;
+      Prefs.showAlert(payload);
       return;
     }
     // 浏览器预览：保留旧 DOM 弹窗，供 7 套回归使用。
@@ -1138,6 +1141,43 @@
       var AC = window.__TAURI__ && window.__TAURI__.webviewWindow;
       if (AC && AC.getCurrentWebviewWindow) AC.getCurrentWebviewWindow().setFocus().catch(function () {});
     } catch (e) { /* ignore */ }
+  }
+
+  // v0.7.6 兜底：原生提醒窗创建失败时（WebView2 异常 / 权限 / 资源），
+  // 至少把内容显示在主时钟窗口内，保证用户看得到、能手动停止闹铃。
+  function showInWindowAlertFallback() {
+    var p = lastAlertPayload;
+    var toast = byId('alarm-toast');
+    if (!p || !toast) return;
+    var L = STRINGS_LANG();
+    var txt = String(p.body || '');
+    if (p.content) txt += '\n' + p.content;
+    txt += '\n' + I18n.t(L, 'alertFallback');
+    var body = byId('alarm-toast-body');
+    if (body) body.textContent = txt;
+    toast.hidden = false;
+    lastAlertPayload = null;
+  }
+
+  // v0.7.6：把 Rust 读回来的真实注册表状态翻译成人话，主人口中「自启失败」
+  // 到底是没登记、路径没引号、旧路径、被禁用还是 UAC 拦截，一眼可辨。
+  function describeAutostart(d) {
+    var L = STRINGS_LANG();
+    if (!d || d.supported === false) return I18n.t(L, 'autostartDiagFail');
+    var lines = [];
+    if (d.platform) lines.push('OS: ' + d.platform);
+    if (d.exePath) lines.push('EXE: ' + d.exePath);
+    lines.push('· ' + (d.registered ? I18n.t(L, 'autostartDiagWin') : I18n.t(L, 'autostartDiagNoReg')));
+    lines.push('· ' + (d.pathQuoted ? I18n.t(L, 'autostartDiagQuoted') : I18n.t(L, 'autostartDiagUnquoted')));
+    lines.push('· ' + (d.pathMatchesExe ? I18n.t(L, 'autostartDiagMatch') : I18n.t(L, 'autostartDiagMismatch')));
+    if (d.runValue) lines.push('RUN: ' + d.runValue);
+    if (d.exeExists === false) lines.push('⚠ ' + I18n.t(L, 'autostartDiagExeMissing'));
+    if (d.runAsAdminCompat) lines.push('⚠ ' + I18n.t(L, 'autostartDiagAdmin'));
+    if (d.disabledByTaskManager) lines.push('⚠ ' + I18n.t(L, 'autostartDiagDisabled'));
+    var healthy = d.registered && d.pathQuoted && d.pathMatchesExe
+      && d.exeExists !== false && !d.runAsAdminCompat && !d.disabledByTaskManager;
+    lines.push(healthy ? '✔ ' + I18n.t(L, 'autostartDiagOk') : '');
+    return lines.filter(function (s) { return !!s; }).join('\n');
   }
 
   function hideAlarmToast() {
@@ -1438,6 +1478,32 @@
         });
         var st = byId('autostart-status');
         if (st) { st.hidden = false; st.textContent = I18n.t(STRINGS_LANG(), 'autostartFail'); }
+      });
+    });
+    // v0.7.6：诊断 / 一键修复开机自启（把真实注册表状态显示出来，不再靠猜）。
+    var diagBox = byId('autostart-diag');
+    function renderDiag(d, prefix) {
+      if (!diagBox) return;
+      diagBox.hidden = false;
+      diagBox.textContent = (prefix ? prefix + '\n' : '') + describeAutostart(d);
+    }
+    var diagBtn = byId('autostart-diag-btn');
+    if (diagBtn) diagBtn.addEventListener('click', function () {
+      Prefs.autostartDiagnostics().then(function (d) { renderDiag(d, ''); });
+    });
+    var repairBtn = byId('autostart-repair-btn');
+    if (repairBtn) repairBtn.addEventListener('click', function () {
+      var L = STRINGS_LANG();
+      Prefs.repairAutostart().then(function (d) {
+        renderDiag(d, I18n.t(L, 'autostartRepairOk'));
+        // 修复后重新对齐开关与系统真值。
+        Prefs.getAutostart().then(function (real) {
+          if (real === null) return;
+          state.autostart = real; Prefs.save({ autostart: real });
+          byId('pref-autostart').checked = real;
+        });
+      }).catch(function (e) {
+        renderDiag(null, I18n.t(L, 'autostartRepairFail') + ' ' + String(e || ''));
       });
     });
     byId('pref-clickthrough').addEventListener('change', function (e) { changed({ clickThrough: e.target.checked }); });
@@ -1761,6 +1827,8 @@
         }
         hideAlarmToast();
       });
+      // v0.7.6: Rust 建窗失败 → 页内提醒兜底，不再出现「什么都没弹出来」。
+      Prefs.listen('alert-build-failed', function () { showInWindowAlertFallback(); });
       Prefs.listen('timer-warning', function (p) {
         if (!p) return;
         var L = STRINGS_LANG();
