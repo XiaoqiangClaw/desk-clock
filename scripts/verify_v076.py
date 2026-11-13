@@ -71,6 +71,16 @@ check("app.js fallback shows in-window toast",
       "showInWindowAlertFallback" in app and "toast.hidden = false" in app)
 check("alert.html renders reminder content block",
       'id="content"' in alert_html and "[hidden]" in alert_html)
+# v0.7.6 修订：主人装机截图反馈「上下黑边」。卡片必须铺满窗口、
+# 与窗口同色，否则 flex 居中会在上下露出窗口底色形成黑边。
+check("alert card fills window (no top/bottom letterbox)",
+      "height: 100%" in alert_html and "justify-content: center" in alert_html
+      and "border-radius: 0" in alert_html)
+check("alert card background equals window background",
+      "background: #181a1f" in alert_html)
+check("alert layout regression script exists and is in CI",
+      (ROOT / "scripts" / "verify_alert_layout.py").exists()
+      and "scripts/verify_alert_layout.py" in rd(".github/workflows/build.yml"))
 
 # ------------------------------------------------------------- B. autostart
 check("repair_windows_run_value exists",
