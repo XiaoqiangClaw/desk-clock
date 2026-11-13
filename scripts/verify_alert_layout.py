@@ -85,6 +85,24 @@ with sync_playwright() as p:
     check("long reminder text still fills window", m2["gapTop"] < 1 and m2["gapBottom"] < 1, m2)
     check("long reminder text is displayed", m2["contentVisible"])
     check("long reminder keeps all 4 buttons visible", m2["buttonsVisible"])
+
+    # v0.7.6 二次修订：窗口必须按内容自适应高度，不能固定 260px 留大块空白。
+    page3 = browser.new_page(viewport={"width": 360, "height": 176}, device_scale_factor=1)
+    page3.add_init_script("window.__DC_ALERT__ = " + json.dumps(payload, ensure_ascii=False) + ";")
+    page3.add_init_script("""
+      window.__TAURI__ = { core: { invoke: (cmd, args) => {
+        (window.__RESIZE_CALLS__ = window.__RESIZE_CALLS__ || []).push({cmd, height: args && args.height});
+        return Promise.resolve();
+      } } };
+    """)
+    page3.goto((ROOT / "ui" / "alert.html").resolve().as_uri())
+    page3.wait_for_timeout(350)
+    calls = page3.evaluate("window.__RESIZE_CALLS__ || []")
+    check("alert invokes resize_alert with measured height",
+          bool(calls) and calls[0]["cmd"] == "resize_alert"
+          and isinstance(calls[0]["height"], (int, float)), calls)
+    check("measured height is compact (no 260px letterbox)",
+          bool(calls) and 120 <= calls[0]["height"] < 200, calls[0]["height"] if calls else None)
     browser.close()
 
 failed = [n for n, ok, _ in results if not ok]

@@ -18,8 +18,8 @@
   }
   .wrap { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
   .card {
-    /* v0.7.6 修订：铺满整个窗口（旧版只占中间 146px/260px，
-       上下各露出 57px 窗口底色 → 主人截图里的「上下黑边」）。
+    /* v0.7.6 二次修订：铺满窗口 + 由 Rust 按真实内容高度 resize 窗口，
+       彻底消除「窗口 260px、内容只占上半截」留下的大块空白。
        内容用 flex 垂直居中，提醒内容变长时按钮仍固定在底部可见。 */
     width: 100%; height: 100%; box-sizing: border-box; padding: 14px 16px;
     display: flex; flex-direction: column; justify-content: center;
@@ -108,12 +108,39 @@
     var ev = window.__TAURI__ && window.__TAURI__.event;
     if (ev && typeof ev.listen === 'function') {
       ev.listen('alert-payload', function (e) {
-        if (e && e.payload) { payload = e.payload; render(); }
+        if (e && e.payload) { payload = e.payload; render(); fitWindow(); }
       });
     }
   } catch (e) { /* ignore */ }
 
   render();
+
+  // v0.7.6 二次修订：把「内容真正需要的高度」告诉 Rust，由 Rust 精确
+  // resize 窗口（前端不直接调 window API，避免权限/时序问题）。窗口不再
+  // 固定 260px，因此不会再出现上下大块空白（主人反馈的「上下黑边」）。
+  function fitWindow() {
+    try {
+      var card = document.getElementById('card');
+      if (!card) return;
+      var h = 0, i;
+      for (i = 0; i < card.children.length; i++) {
+        var el = card.children[i];
+        if (el.hidden) continue;
+        var r = el.getBoundingClientRect();
+        var cs = getComputedStyle(el);
+        h += r.height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+      }
+      // 上下 padding 14*2 + 左右 border 无关高度 + 2px 边框 + 少量余量
+      h += 28 + 2 + 6;
+      invoke('resize_alert', { height: Math.ceil(h) });
+    } catch (e) { /* 旧二进制无此命令时静默降级为铺满样式 */ }
+  }
+  // 字体加载会改变行高，等首帧与字体就绪后各测一次。
+  if (document.readyState === 'complete') fitWindow();
+  else window.addEventListener('load', fitWindow);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(fitWindow).catch(function () {});
+  }
 })();
 </script>
 </body>

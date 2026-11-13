@@ -2004,7 +2004,10 @@ async fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), St
             WebviewUrl::App(PathBuf::from("alert.html")),
         )
         .title("Desk Clock v0.7.6 · 提醒")
-        .inner_size(360.0, 260.0)
+        // v0.7.6 二次修订：不再固定 260px（内容只占上半截，下方留一大块
+        // 空白 = 主人截图里的「上下黑边」）。先给一个紧凑初值，前端量出
+        // 真实内容高度后立刻通过 resize_alert 精确调整。
+        .inner_size(360.0, 176.0)
         .resizable(false)
         .decorations(false)
         // v0.7.5: an opaque window is mandatory. A transparent WebView can fail
@@ -2071,6 +2074,23 @@ fn schedule_alert_autoclose(app: &AppHandle, payload: &serde_json::Value) {
 fn close_alert(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("alert") {
         let _ = win.close();
+    }
+    Ok(())
+}
+
+/// v0.7.6 二次修订：提醒窗按内容自适应高度。
+/// 前端测量卡片真实高度后调用；Rust 侧 clamp 防止异常值把窗口撑爆或压没，
+/// 并重新居中。窗口尺寸变化不会再触发「固定高度留白」。
+#[tauri::command]
+fn resize_alert(app: AppHandle, height: f64) -> Result<(), String> {
+    if !height.is_finite() {
+        return Err("invalid alert height".into());
+    }
+    let h = height.clamp(120.0, 420.0);
+    if let Some(win) = app.get_webview_window("alert") {
+        win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(360.0, h)))
+            .map_err(|e| e.to_string())?;
+        let _ = win.center();
     }
     Ok(())
 }
@@ -2396,6 +2416,7 @@ pub fn run() {
             get_shutdown_status,
             show_alert,
             close_alert,
+            resize_alert,
             alert_action
         ])
         .run(tauri::generate_context!())

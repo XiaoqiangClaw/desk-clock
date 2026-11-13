@@ -81,6 +81,16 @@ check("alert card background equals window background",
 check("alert layout regression script exists and is in CI",
       (ROOT / "scripts" / "verify_alert_layout.py").exists()
       and "scripts/verify_alert_layout.py" in rd(".github/workflows/build.yml"))
+# v0.7.6 二次修订：窗口按内容自适应（真机二次反馈「还是这个样子」）
+check("alert window uses compact initial size, not fixed 260",
+      ".inner_size(360.0, 176.0)" in lib and ".inner_size(360.0, 260.0)" not in lib)
+check("resize_alert command exists, is registered and clamps height",
+      "fn resize_alert(" in lib and "resize_alert," in lib
+      and "height.clamp(120.0, 420.0)" in lib)
+check("alert.html measures content and calls resize_alert",
+      "fitWindow" in alert_html and "invoke('resize_alert'" in alert_html)
+check("alert.html refits on reused-window payload update",
+      "render(); fitWindow();" in alert_html)
 
 # ------------------------------------------------------------- B. autostart
 check("repair_windows_run_value exists",
