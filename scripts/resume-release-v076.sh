@@ -14,7 +14,8 @@ if [ "${1:-}" = "check" ]; then
   if git ls-remote origin HEAD 2>/dev/null | grep -qE '^[0-9a-f]{40}[[:space:]]+HEAD'; then
     echo "AVAILABLE"; exit 0
   fi
-  echo "BLOCKED"; exit 1
+  # 恒 0：供 automation trigger 做只读探测，失败不算执行错误
+  echo "BLOCKED"; exit 0
 fi
 
 echo "=== 1. 确认代码完好 ==="
