@@ -1833,7 +1833,7 @@
         if (!p) return;
         var L = STRINGS_LANG();
         var actName = I18n.t(L, p.action === 'reboot' ? 'alertActionReboot' : 'alertActionShutdown');
-        Prefs.showAlert({
+        var payload = {
           kind: 'timer',
           title: I18n.t(L, 'alertTimerTitle'),
           body: I18n.t(L, 'alertTimerBody').replace('%s', String(p.label || '')).replace('%s', String(p.warnSeconds || 30)).replace('%s', actName),
@@ -1842,7 +1842,10 @@
             { action: 'terminate', label: I18n.t(L, 'alertTerminate') },
             { action: 'dismiss', label: I18n.t(L, 'alarmDismiss') }
           ]
-        });
+        };
+        // v0.7.6: 原生提醒窗建不出来时，页内兜底也要能显示内容。
+        lastAlertPayload = payload;
+        Prefs.showAlert(payload);
       });
     }
 
