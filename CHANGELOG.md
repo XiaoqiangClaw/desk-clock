@@ -1,6 +1,6 @@
 # Desk Clock — 版本记录
 
-> 当前版本：**v0.7.6**。功能说明与截图见 `README.md`，架构说明见 `docs/SPEC.md`。
+> 当前版本：**v0.7.7**。功能说明与截图见 `README.md`，架构说明见 `docs/SPEC.md`。
 
 | 版本 | 主要变化 |
 |---|---|
@@ -20,9 +20,41 @@
 | v0.7.4 | 🎯 **覆盖驱动同步 + 备源容错 + 每版内置最新数据**：把「按时间盲轮询」改为「数据覆盖驱动」——覆盖内纯本地零联网、覆盖末年 12 月起临期预取、跨年/过期自愈拉取、缓存丢失自动恢复；新增 jsDelivr 备源自动容错（主源故障无缝切换）；**发版流程强制升级 `chinese_calendar` 重生成并内置当前最新数据**；CI 降频为 11 月发布季每周 + 其余每月；`verify_calendar_sync.py` 扩至 129 项（含覆盖驱动 8 个日期场景与备源切换行为测试） |
 | v0.7.5 | 🛠️ **全量缺陷修复 + 真·自动更新**：修复居中提醒窗透明不可见却吞点击（改不透明 + Rust 侧超时兜底自动关窗）、托盘/设置页退出无效、托盘双击无反应、开机自启失败吞错与启动自愈、日历自动同步开关不持久、定时任务重复排程/取消状态不同步、提权取消后单实例锁丢失、隐藏窗口空转定时器、配置消毒与日历数据校验、一次性规则缺失、自定义负时区标签、铃声试听计时器、启动校时重复调用等；新增闹钟「提醒内容」；移除无声的英文播报并统一中文报时；一键更新改为应用内自动下载安装、失败自动回退下载页；release 流程补齐静态门禁 |
 | v0.7.6 | 🔴 **修复真根因：闹钟/定时提醒弹窗仍不显示 + Windows 开机自启仍失败**；🛠️ 真机两轮视觉修订（卡片铺满 → 窗口按内容自适应高度，14:17 主人验收「显示正常」）。`show_alert` 原为同步命令内直接 `WebviewWindowBuilder::build()`，官方明确该用法在 Windows WebView2 会与主线程互锁（弹窗根本没被创建），现改为 async 命令 + 独立线程建窗 + 并发无状态保护 + 建窗失败时页内提醒兜底 + 自动关窗代次化；自启方面定位到上游 `auto-launch 0.6.0` 写入注册表 Run 值时**未给 exe 路径加引号**，含空格的安装目录会被系统解析成 `C:\Program` 而静默不启动（且 `is_enabled()` 只查值存在、界面误报「已开启」），现启用/自愈/一键修复时统一改写为带引号绝对路径并回读校验，同时兼容 HKLM、诊断 UAC 兼容层与任务管理器禁用；设置页新增「检测开机自启状态 / 一键修复」并展示注册表真实值 |
+| v0.7.7 | 🔴 **Windows 开机自启彻底修复（第 4 次、真根因）**：上游插件用 `package_info().name`（= `tauri.conf.json` 的 `productName` "Desk Clock"，带空格）作注册表 `Run` 的**值名**，而 v0.7.6 的修复写到了 Cargo 包名 `desk-clock` —— 机器上两条并存：插件那条无引号（登录被截断成 `C:\...\Desk` 静默失败）＋ 我们那条正确，但 `is_enabled()` 只读插件那条 → 界面永远「已开启」、重启永远不启动、旧值永不清理。本版 Windows 自启**完全自管**：值名统一取 `package_info().name`、写入带引号绝对路径并精确回读、删除历史遗留值名、清 StartupApproved「已禁用」字节、每次启动写 `startup.log`（区分 AUTOSTART/MANUAL，可证明系统是否真的在登录时拉起程序）。诊断面板新增值名 / 期望命令 / 遗留项 / 最近启动记录 |
 
 各版本安装包见 [Releases](https://github.com/xiaoqiangclub/desk-clock/releases)。
 
+
+## v0.7.7 更新详情（2026-11-14）
+
+### 🔴 Windows 开机自启：值名写错（真根因 #2）
+
+v0.7.6 已修「注册表命令没加引号」，但主人真机重启依然不自启。逐个核对上游源码后确认了第二个更隐蔽的根因：
+
+| 证据 | 源码位置 | 结论 |
+|---|---|---|
+| 插件用 `app.package_info().name` 作 Run 的**值名** | `tauri-plugin-autostart 2.7.0` `src/lib.rs:225-229` | 值名 = `PackageInfo.name` |
+| `PackageInfo.name` 取 `config.product_name` | `tauri-codegen 2.7.4` `src/context.rs:250-263` | 值名 = `"Desk Clock"`（带空格），**不是** `desk-clock` |
+| 上游命令由 `format!("{} {}", app_path, args)` 拼出 | `auto-launch 0.6.0` `src/windows.rs` `enable_with_root_key` | 路径无引号 → 含空格路径登录必失败 |
+
+于是机器上长期存在**两条**启动项：
+
+- `HKCU\...\Run\Desk Clock` = `C:\Users\x\AppData\Local\Desk Clock\desk-clock.exe --startup` ← 插件写的，无引号，登录被截断成 `C:\Users\x\AppData\Local\Desk`，静默失败
+- `HKCU\...\Run\desk-clock` = `"C:\...\desk-clock.exe" --startup` ← v0.7.6 补写的，正确
+
+而 `is_enabled()` 只查 `Desk Clock` 那条，所以界面永远显示「已开启」；旧值也永远不被清理，连「一键修复」都替换不掉它。
+
+### ✅ 本版做法：Windows 自启完全自管，不再经过插件
+
+1. **值名统一**取 `app.package_info().name`（与插件、任务管理器显示一致，不会再多出一条）。
+2. **写入带引号的绝对路径 + `--startup`**，随后 `reg query` **精确回读比对**，不一致即报错（不再有假成功）。
+3. **清理历史遗留值名**（`desk-clock` / `DeskClock`）与任何旧的无引号命令。
+4. **清掉 `StartupApproved\Run` 的「已禁用」字节**（HKCU + HKLM），否则 Windows 11「设置 → 应用 → 启动」里显示为关闭、登录直接跳过。
+5. **每次启动写 `startup.log`**（`%APPDATA%\app.deskclock.desktop\startup.log`，>64 KB 自动轮换），每行标注 `AUTOSTART` / `MANUAL` 与完整 argv —— 下次重启后可直接证明「Windows 到底有没有在登录时把程序拉起来」。
+6. **启动自愈**改为：`if prefs.autostart && !healthy { 重写 + 校验 }`，重装、换路径、被系统禁用都会自动纠正。
+7. **诊断面板增强**：显示值名、期望命令、旧版本残留项、最近启动记录；「一键修复」会把系统状态与保存意图同步一致。
+
+> 验证：新增 `scripts/verify_v077.py`（31 项静态断言，含「值名取自 package_info」「带引号 + 精确回读」「遗留值清理」「StartupApproved 启用字节」「自管不经过插件」「startup.log」），全套回归见 `docs/SPEC.md`。
 
 ## v0.7.6 更新详情（2026-11-13）
 

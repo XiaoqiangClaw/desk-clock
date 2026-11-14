@@ -124,9 +124,23 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Desk Clock ${{ github.ref_name }} 🕐"
           releaseBody: |
-            ## 🕐 Desk Clock v0.7.6
+            ## 🕐 Desk Clock v0.7.7
 
-            好看、好用、还跨平台的开源桌面时钟。本版专门修复主人反复反馈的两个问题：**闹钟 / 定时提醒弹窗不显示**、**Windows 开机自启不生效**。
+            好看、好用、还跨平台的开源桌面时钟。本版把 **Windows 开机自启**彻底修到底：不再依赖上游插件，改为自己管注册表。
+
+            ### 🔴 开机自启：终于定位到「值名写错了」
+
+            v0.7.6 已经修过「路径没加引号」，但真机仍不自启。逐个核对上游源码后确认了第二个更隐蔽的根因：
+
+            - `tauri-plugin-autostart` 用 `app.package_info().name` 当注册表 `Run` 的**值名**，而 Tauri 的 `PackageInfo.name` 取的是 `tauri.conf.json` 的 `productName` —— 本项目是 **`Desk Clock`（带空格）**，不是 Cargo 包名 `desk-clock`。
+            - 所以机器上一直存在**两条**启动项：插件写的 `Desk Clock`（无引号，登录被截断成 `C:\...\Desk` 静默失败）和 v0.7.6 补写的 `desk-clock`（带引号、正确）。
+            - 而 `is_enabled()` 只读 `Desk Clock` 那条 → 界面永远显示「已开启」，重启永远不启动；旧值也永远不会被清掉。
+
+            本版起 Windows 自启**完全自管**：值名统一取 `product_info().name`、写入带引号的绝对路径并**精确回读比对**、顺手删除历史遗留值名、清掉「启动应用已禁用」标记、每次启动写 `startup.log`（区分 AUTOSTART / MANUAL，可直接证明 Windows 到底有没有在登录时拉起程序）。
+
+            ### 🩺 诊断面板增强
+
+            设置 →「窗口」→ 开机自启下方：新增值名、期望命令、旧版本残留项、最近启动记录，一键修复会把系统状态与保存意图同步一致。
 
             ### 🔴 提醒弹窗：找到真根因
 

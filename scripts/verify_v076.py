@@ -94,22 +94,20 @@ check("alert.html refits on reused-window payload update",
 
 # ------------------------------------------------------------- B. autostart
 check("repair_windows_run_value exists",
-      "fn repair_windows_run_value()" in lib)
+      "fn repair_windows_run_value(app: &AppHandle)" in lib)
 # The quoted path is the whole point: `\"<exe>\" --startup`.
 check("Run value is written with a QUOTED absolute exe path",
       'format!("\\"{}\\" --startup", exe.display())' in lib)
 check("Run value is read back and verified",
-      '["query", WIN_RUN_KEY, "/v", WIN_RUN_APP_NAME]' in lib
-      and "Run value read-back mismatch" in lib)
+      "fn reg_query_raw" in lib and "Run value read-back mismatch" in lib)
 check("repair handles both HKCU and HKLM",
       "WIN_RUN_KEY_HKLM" in lib and "WIN_RUN_KEY" in lib)
 check("reg.exe runs without flashing a console window",
       "CREATE_NO_WINDOW" in lib or "0x0800_0000" in lib)
-check("set_autostart repairs the value immediately after enable()",
-      "mgr.enable().map_err(|e| e.to_string())?;" in lib
-      and "repair_windows_run_value()?;" in lib)
+check("set_autostart writes the registry value directly on Windows",
+      "repair_windows_run_value(&app)?;" in lib)
 check("startup self-heal also repairs (not just re-enables)",
-      "autostart Run value repair failed" in lib)
+      "autostart repair failed" in lib and "win_autostart_healthy(handle)" in lib)
 check("diagnostics command is registered",
       "get_autostart_diagnostics" in lib and "repair_autostart" in lib)
 check("diagnostics expose the real registry state",
@@ -134,14 +132,14 @@ check("UAC / RUNASADMIN conflict is explicitly surfaced",
       "runAsAdminCompat" in app and "autostartDiagAdmin" in i18n)
 
 # ------------------------------------------------------------ C. packaging
-check("version bumped to 0.7.6",
-      "var APP_VERSION = '0.7.6';" in app
-      and '"version": "0.7.6"' in rd("src-tauri/tauri.conf.json")
-      and 'version = "0.7.6"' in rd("src-tauri/Cargo.toml"))
-check("CHANGELOG documents v0.7.6 root causes",
+check("version bumped past 0.7.6",
+      "var APP_VERSION = '0.7.7';" in app
+      and '"version": "0.7.7"' in rd("src-tauri/tauri.conf.json")
+      and 'version = "0.7.7"' in rd("src-tauri/Cargo.toml"))
+check("CHANGELOG documents the autostart root cause",
       "v0.7.6" in rd("CHANGELOG.md") and "auto-launch" in rd("CHANGELOG.md"))
-check("release body targets v0.7.6",
-      "## 🕐 Desk Clock v0.7.6" in rd(".github/workflows/release.yml"))
+check("release body targets v0.7.7",
+      "## 🕐 Desk Clock v0.7.7" in rd(".github/workflows/release.yml"))
 check("new regression script is in CI static checks",
       "scripts/verify_v076.py" in rd(".github/workflows/build.yml"))
 

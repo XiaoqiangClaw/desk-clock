@@ -229,7 +229,7 @@ with sync_playwright() as pw:
           page.locator("#donate-toggle").inner_text())
     check("project link present", page.locator("#project-link").count() == 1)
     check("check-update button present", page.locator("#check-update").count() == 1)
-    check("version badge shows 0.7.6", "0.7.6" in page.locator("#ver-badge").inner_text(),
+    check("version badge shows 0.7.7", "0.7.7" in page.locator("#ver-badge").inner_text(),
           page.locator("#ver-badge").inner_text())
     qr = page.locator("#donate-img")
     page.locator("#donate-toggle").click(); page.wait_for_timeout(150)

@@ -16,7 +16,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.7.6';
+  var APP_VERSION = '0.7.7';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -1167,16 +1167,27 @@
     var lines = [];
     if (d.platform) lines.push('OS: ' + d.platform);
     if (d.exePath) lines.push('EXE: ' + d.exePath);
+    if (d.valueName) lines.push('RUN 值名: ' + d.valueName);
     lines.push('· ' + (d.registered ? I18n.t(L, 'autostartDiagWin') : I18n.t(L, 'autostartDiagNoReg')));
     lines.push('· ' + (d.pathQuoted ? I18n.t(L, 'autostartDiagQuoted') : I18n.t(L, 'autostartDiagUnquoted')));
     lines.push('· ' + (d.pathMatchesExe ? I18n.t(L, 'autostartDiagMatch') : I18n.t(L, 'autostartDiagMismatch')));
     if (d.runValue) lines.push('RUN: ' + d.runValue);
+    if (d.expectedCommand) lines.push('应为: ' + d.expectedCommand);
     if (d.exeExists === false) lines.push('⚠ ' + I18n.t(L, 'autostartDiagExeMissing'));
     if (d.runAsAdminCompat) lines.push('⚠ ' + I18n.t(L, 'autostartDiagAdmin'));
     if (d.disabledByTaskManager) lines.push('⚠ ' + I18n.t(L, 'autostartDiagDisabled'));
-    var healthy = d.registered && d.pathQuoted && d.pathMatchesExe
-      && d.exeExists !== false && !d.runAsAdminCompat && !d.disabledByTaskManager;
+    if (d.legacyValues && d.legacyValues.length) {
+      // v0.7.7：旧版本写错值名留下的脏记录，是「显示已开启、重启不启动」的元凶之一。
+      lines.push('⚠ ' + I18n.t(L, 'autostartDiagLegacy') + ': '
+        + d.legacyValues.map(function (v) { return v.name + ' = ' + v.value; }).join(' | '));
+    }
+    var healthy = d.healthy === true;
     lines.push(healthy ? '✔ ' + I18n.t(L, 'autostartDiagOk') : '');
+    if (d.startupLog && d.startupLog.length) {
+      lines.push('');
+      lines.push(I18n.t(L, 'autostartDiagLog') + (d.startupLogPath ? ' (' + d.startupLogPath + ')' : ''));
+      d.startupLog.slice(-8).forEach(function (l) { lines.push('  ' + l); });
+    }
     return lines.filter(function (s) { return !!s; }).join('\n');
   }
 

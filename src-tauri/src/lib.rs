@@ -318,18 +318,52 @@ fn set_admin_compat(_enabled: bool) -> Result<(), String> {
 }
 
 // ------------------------------------------------------- Windows autostart
+//
+// 🔴 v0.7.7（第 4 次修，这次是真根因）
+//
+// v0.7.6 的修复方向对（要加引号），但**值名写错了**：插件用
+// `package_info().name` 作为 Run 值名，而 Tauri 的 `PackageInfo.name` 取的是
+// tauri.conf.json 的 `productName`（本项目 = "Desk Clock"，**带空格**），
+// 不是 Cargo 包名 "desk-clock"。结果机器上留下两条 Run 值：
+//   · "Desk Clock"  = C:\...\Desk Clock\desk-clock.exe --startup   ← 插件写的，无引号 → 登录被解析成 C:\...\Desk 而静默失败
+//   · "desk-clock"  = "C:\...\desk-clock.exe" --startup            ← 我们写的，正确
+// 而 `is_enabled()` 读的是 "Desk Clock"，所以界面永远「已开启」但从不启动；
+// 且旧值永远不被清理，「一键修复」也无法真正替换它。
+//
+// v0.7.7 起 Windows 自启完全自管，不再经由插件：
+//   1. 值名统一取 `package_info().name`（与插件/Task Manager 显示一致）；
+//   2. 写入带引号的绝对路径 + `--startup`，并**精确回读比对**；
+//   3. 顺手删除历史遗留值名（"desk-clock" 等）与任何无引号的旧命令；
+//   4. 清掉 StartupApproved\Run 的「已禁用」字节（HKCU + HKLM），
+//      否则 Windows 11「启动应用」里显示为关闭、登录直接跳过；
+//   5. 每次启动写 `startup.log`（含是否由自启拉起），下次排查有据可查。
 
-/// Windows Run value name. The autostart plugin uses `package_info().name`,
-/// i.e. the Cargo package name "desk-clock".
+/// Windows Run 值名 = Tauri `productName`（与插件、任务管理器显示一致）。
 #[cfg(target_os = "windows")]
-const WIN_RUN_APP_NAME: &str = "desk-clock";
+fn win_run_value_name(app: &AppHandle) -> String {
+    app.package_info().name.clone()
+}
+
+/// v0.7.6 及更早版本可能写过的值名，必须顺手清掉，否则会残留坏命令。
+#[cfg(target_os = "windows")]
+const WIN_LEGACY_RUN_NAMES: &[&str] = &["desk-clock", "DeskClock"];
+
 #[cfg(target_os = "windows")]
 const WIN_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(target_os = "windows")]
 const WIN_RUN_KEY_HKLM: &str = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(target_os = "windows")]
+const WIN_APPROVED_KEY: &str =
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+#[cfg(target_os = "windows")]
+const WIN_APPROVED_KEY_HKLM: &str =
+    r"HKLM\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+#[cfg(target_os = "windows")]
 const WIN_APPCOMPAT_LAYERS_KEY: &str =
     r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
+/// StartupApproved 里「启用」的 12 字节标志（与 auto-launch 一致）。
+#[cfg(target_os = "windows")]
+const WIN_APPROVED_ENABLED_HEX: &str = "020000000000000000000000";
 
 /// `reg.exe` without flashing a console window in a GUI app.
 #[cfg(target_os = "windows")]
@@ -341,119 +375,278 @@ fn reg_command() -> Command {
     c
 }
 
-/// v0.7.6: fix the upstream `auto-launch 0.6.0` Windows defect.
-///
-/// Its `enable_with_root_key()` writes
-/// `format!("{} {}", app_path, args.join(" "))` WITHOUT quoting app_path.
-/// Any install path containing a space (`C:\Program Files\...`, a user name
-/// with a space, ...) makes Windows parse `C:\Program` as the executable and
-/// silently skip the app at logon. Worse, `is_enabled()` only checks that
-/// the value EXISTS, so the UI happily reports "enabled" while nothing ever
-/// starts — exactly the "autostart still fails" symptom.
-///
-/// After the plugin's enable() we overwrite the Run value with a properly
-/// quoted absolute path and read it back to verify.
 #[cfg(target_os = "windows")]
-fn repair_windows_run_value() -> Result<String, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let value = format!("\"{}\" --startup", exe.display());
-    // The plugin uses WindowsEnableMode::Dynamic: when the app runs elevated
-    // it writes HKLM (which Windows also executes at logon). Repair that one
-    // too when writable, otherwise the unquoted HKLM entry stays broken.
-    let hklm = reg_command()
-        .args(["query", WIN_RUN_KEY_HKLM, "/v", WIN_RUN_APP_NAME])
+fn reg_query_raw(key: &str, name: &str) -> Option<String> {
+    reg_command()
+        .args(["query", key, "/v", name])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if hklm {
-        let _ = reg_command()
-            .args(["add", WIN_RUN_KEY_HKLM, "/v", WIN_RUN_APP_NAME, "/t", "REG_SZ", "/d"])
-            .arg(&value)
-            .arg("/f")
-            .output();
-    }
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn reg_add(key: &str, name: &str, ty: &str, data: &str) -> Result<(), String> {
     let out = reg_command()
-        .args(["add", WIN_RUN_KEY, "/v", WIN_RUN_APP_NAME, "/t", "REG_SZ", "/d"])
-        .arg(&value)
+        .args(["add", key, "/v", name, "/t", ty, "/d"])
+        .arg(data)
         .arg("/f")
         .output()
         .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
-    let q = reg_command()
-        .args(["query", WIN_RUN_KEY, "/v", WIN_RUN_APP_NAME])
-        .output()
-        .map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&q.stdout).to_string();
-    if !text.contains(&format!("\"{}\"", exe.display())) {
-        return Err(format!("Run value read-back mismatch: {}", text.trim()));
-    }
-    Ok(value)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn repair_windows_run_value() -> Result<String, String> {
-    Ok(String::new())
+#[cfg(target_os = "windows")]
+fn reg_delete(key: &str, name: &str) {
+    let _ = reg_command()
+        .args(["delete", key, "/v", name, "/f"])
+        .output();
+}
+
+/// 期望写入的启动命令：带引号的绝对路径 + `--startup`。
+#[cfg(target_os = "windows")]
+fn win_expected_run_value() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    Ok(format!("\"{}\" --startup", exe.display()))
+}
+
+/// 读 Run 值里真正登记的命令（HKCU 优先，其次 HKLM）。只读，不改动。
+#[cfg(target_os = "windows")]
+fn win_read_run_value(name: &str) -> Option<(String, bool)> {
+    if let Some(text) = reg_query_raw(WIN_RUN_KEY, name) {
+        return Some((text, false));
+    }
+    reg_query_raw(WIN_RUN_KEY_HKLM, name).map(|t| (t, true))
+}
+
+/// 该值是否被「任务管理器 / 设置 → 启动应用」禁用。
+#[cfg(target_os = "windows")]
+fn win_is_disabled_by_task_manager(name: &str) -> bool {
+    let read = |key: &str| -> Option<bool> {
+        let text = reg_query_raw(key, name)?;
+        let hex = text.split_whitespace().last()?.to_string();
+        // 启用 = 02/06 开头；其余（03/01/00…）= 被禁用。
+        Some(!(hex.starts_with("02") || hex.starts_with("06")))
+    };
+    read(WIN_APPROVED_KEY).unwrap_or(false) || read(WIN_APPROVED_KEY_HKLM).unwrap_or(false)
+}
+
+/// 把 Run 值重写成「带引号的期望命令」，清历史脏项，清禁用标记，并回读校验。
+#[cfg(target_os = "windows")]
+fn repair_windows_run_value(app: &AppHandle) -> Result<String, String> {
+    let name = win_run_value_name(app);
+    let expected = win_expected_run_value()?;
+
+    // ---- 1. 清掉历史遗留值名（v0.7.6 写错的 "desk-clock" 等）----
+    for legacy in WIN_LEGACY_RUN_NAMES {
+        if *legacy == name.as_str() {
+            continue;
+        }
+        reg_delete(WIN_RUN_KEY, legacy);
+        reg_delete(WIN_RUN_KEY_HKLM, legacy);
+    }
+
+    // ---- 2. 写入正确值（HKCU 必写；HKLM 仅在已存在且可写时同步，避免要提权）----
+    reg_add(WIN_RUN_KEY, &name, "REG_SZ", &expected)?;
+    if reg_query_raw(WIN_RUN_KEY_HKLM, &name).is_some() {
+        let _ = reg_add(WIN_RUN_KEY_HKLM, &name, "REG_SZ", &expected);
+    }
+
+    // ---- 3. 清掉「启动应用已禁用」标记，否则登录时被直接跳过 ----
+    let _ = reg_add(WIN_APPROVED_KEY, &name, "REG_BINARY", WIN_APPROVED_ENABLED_HEX);
+    // HKLM 那份通常要管理员权限；写不了也无妨（HKCU 已够本用户启动）。
+    let _ = reg_add(WIN_APPROVED_KEY_HKLM, &name, "REG_BINARY", WIN_APPROVED_ENABLED_HEX);
+
+    // ---- 4. 精确回读校验 ----
+    let text = reg_query_raw(WIN_RUN_KEY, &name)
+        .ok_or_else(|| "Run value disappeared after write".to_string())?;
+    if !text.contains(&expected) {
+        return Err(format!(
+            "Run value read-back mismatch (expected [{}], registry says [{}])",
+            expected,
+            text.trim()
+        ));
+    }
+    Ok(expected)
+}
+
+/// 当前是否已用「正确命令」登记（且没被任务管理器禁用）。
+#[cfg(target_os = "windows")]
+fn win_autostart_healthy(app: &AppHandle) -> bool {
+    let name = win_run_value_name(app);
+    let expected = match win_expected_run_value() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    match win_read_run_value(&name) {
+        Some((text, _)) => text.contains(&expected) && !win_is_disabled_by_task_manager(&name),
+        None => false,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn win_autostart_disable(app: &AppHandle) {
+    let name = win_run_value_name(app);
+    reg_delete(WIN_RUN_KEY, &name);
+    reg_delete(WIN_RUN_KEY_HKLM, &name);
+    for legacy in WIN_LEGACY_RUN_NAMES {
+        reg_delete(WIN_RUN_KEY, legacy);
+        reg_delete(WIN_RUN_KEY_HKLM, legacy);
+    }
+    reg_delete(WIN_APPROVED_KEY, &name);
+    reg_delete(WIN_APPROVED_KEY_HKLM, &name);
+}
+
+// ---- 启动日志：证明「登录时 Windows 到底有没有把程序拉起来」 ----
+
+/// 极简 UTC 时间戳（无第三方依赖）：`YYYY-MM-DD HH:MM:SS UTC`。
+#[cfg(target_os = "windows")]
+fn utc_now_string() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) as i64;
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // Howard Hinnant civil_from_days
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC", y, m, d, h, mi, s)
+}
+
+#[cfg(target_os = "windows")]
+fn startup_log_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("startup.log")
+}
+
+/// 每次进程启动记一行：手动/自启、参数、路径。超过 64 KB 自动轮换。
+#[cfg(target_os = "windows")]
+fn win_log_startup(app: &AppHandle) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let from_autostart = args.iter().any(|a| a == "--startup");
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let line = format!(
+        "{} {} exe={} args={:?}\n",
+        utc_now_string(),
+        if from_autostart { "AUTOSTART" } else { "MANUAL   " },
+        exe,
+        args
+    );
+    let p = startup_log_path(app);
+    if let Some(dir) = p.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(meta) = fs::metadata(&p) {
+        if meta.len() > 64 * 1024 {
+            let _ = fs::remove_file(&p);
+        }
+    }
+    use std::io::Write;
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&p) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// 读最后 n 行启动日志（诊断面板用）。
+#[cfg(target_os = "windows")]
+fn win_read_startup_log(app: &AppHandle, n: usize) -> Vec<String> {
+    let p = startup_log_path(app);
+    let text = fs::read_to_string(&p).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    lines
+        .iter()
+        .skip(lines.len().saturating_sub(n))
+        .map(|l| l.to_string())
+        .collect()
 }
 
 /// Read the real Windows state back, so the user can SEE why autostart
 /// fails instead of guessing. Never mutates anything.
 #[cfg(target_os = "windows")]
-fn windows_autostart_probe() -> serde_json::Value {
+fn windows_autostart_probe(app: &AppHandle) -> serde_json::Value {
     let exe = std::env::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    let query = |key: &str, name: &str| -> Option<String> {
-        reg_command()
-            .args(["query", key, "/v", name])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-    };
-    let run = query(WIN_RUN_KEY, WIN_RUN_APP_NAME)
-        .or_else(|| query(WIN_RUN_KEY_HKLM, WIN_RUN_APP_NAME));
-    let registered = run.is_some();
-    let run_text = run.unwrap_or_default();
-    let quoted = run_text.contains(&format!("\"{}\"", exe));
-    let matches = run_text.contains(&exe);
-    let layers = query(WIN_APPCOMPAT_LAYERS_KEY, &exe);
-    let elevated_compat = layers.as_ref().map(|s| s.contains("RUNASADMIN")).unwrap_or(false);
-    let approved = query(
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
-        WIN_RUN_APP_NAME,
-    );
-    // Enabled entries start with 02/06; Task Manager writes 03/01/00... when
-    // the user disables an item. Report the raw hex instead of guessing when
-    // reg.exe output cannot be parsed, so the UI never shows a false verdict.
-    let approved_hex = approved
+    let name = win_run_value_name(app);
+    let expected = win_expected_run_value().unwrap_or_default();
+
+    let current = win_read_run_value(&name);
+    let registered = current.is_some();
+    let (run_text, in_hklm) = current.clone().unwrap_or_default();
+    let run_text = run_text.trim().to_string();
+    let quoted = !expected.is_empty() && run_text.contains(&expected);
+    let matches = !exe.is_empty() && run_text.contains(&exe);
+
+    // 历史遗留值（v0.7.6 写错的值名），有就是隐患。
+    let legacy: Vec<serde_json::Value> = WIN_LEGACY_RUN_NAMES
+        .iter()
+        .filter_map(|l| {
+            let t = reg_query_raw(WIN_RUN_KEY, l)
+                .or_else(|| reg_query_raw(WIN_RUN_KEY_HKLM, l))?;
+            Some(serde_json::json!({ "name": l, "value": t.trim() }))
+        })
+        .collect();
+
+    let layers = reg_query_raw(WIN_APPCOMPAT_LAYERS_KEY, &exe);
+    let elevated_compat = layers
+        .as_ref()
+        .map(|s| s.contains("RUNASADMIN"))
+        .unwrap_or(false);
+
+    let approved_text = reg_query_raw(WIN_APPROVED_KEY, &name)
+        .or_else(|| reg_query_raw(WIN_APPROVED_KEY_HKLM, &name));
+    let approved_hex = approved_text
         .as_ref()
         .and_then(|s| s.split_whitespace().last().map(|v| v.to_string()))
         .unwrap_or_default();
-    let disabled_by_task_manager = !approved_hex.is_empty()
-        && !approved_hex.starts_with("02")
-        && !approved_hex.starts_with("06");
-    // Compute before `exe` is moved into the JSON value below.
+    let disabled_by_task_manager = win_is_disabled_by_task_manager(&name);
+
     let exe_exists = !exe.is_empty() && std::path::Path::new(&exe).exists();
+
     serde_json::json!({
         "platform": "windows",
         "exeExists": exe_exists,
         "exePath": exe,
-        "runValue": run_text.trim(),
+        "valueName": name,
+        "expectedCommand": expected,
+        "runValue": run_text,
         "registered": registered,
+        "registeredInHklm": in_hklm,
         "pathQuoted": quoted,
         "pathMatchesExe": matches,
+        "legacyValues": legacy,
         "runAsAdminCompat": elevated_compat,
         "disabledByTaskManager": disabled_by_task_manager,
-        "startupApprovedHex": approved_hex
+        "startupApprovedHex": approved_hex,
+        "startupLog": win_read_startup_log(app, 20),
+        "startupLogPath": startup_log_path(app).display().to_string()
     })
 }
 
 #[cfg(not(target_os = "windows"))]
-fn windows_autostart_probe() -> serde_json::Value {
+fn windows_autostart_probe(_app: &AppHandle) -> serde_json::Value {
     serde_json::json!({ "platform": std::env::consts::OS, "supported": false })
 }
+
 
 /// Ask Windows for an elevated copy, then terminate this one.
 ///
@@ -654,36 +847,53 @@ fn set_click_through(app: AppHandle, enabled: bool) -> Result<(), String> {
 
 #[tauri::command]
 fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
-    let mgr = app.autolaunch();
-    if enabled {
-        mgr.enable().map_err(|e| e.to_string())?;
-        // v0.7.6: the plugin writes an UNQUOTED exe path into the Run value.
-        // Repair it immediately (and verify by reading back), otherwise any
-        // install path containing a space silently breaks logon startup while
-        // is_enabled() still says "on".
-        #[cfg(target_os = "windows")]
-        repair_windows_run_value()?;
-    } else {
-        mgr.disable().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        // v0.7.7: Windows 上完全自管，不再经过插件（插件用 productName 作值名，
+        // 且写入的命令不带引号，二者叠加正是「界面已开启、登录不启动」的根因）。
+        if enabled {
+            repair_windows_run_value(&app)?;
+            if !win_autostart_healthy(&app) {
+                return Err("autostart registration did not stick".to_string());
+            }
+            Ok(true)
+        } else {
+            win_autostart_disable(&app);
+            Ok(win_autostart_healthy(&app))
+        }
     }
-    // v0.7: read the system state back instead of trusting the write.
-    // If the registration silently failed, return an error so the UI can show
-    // failure rather than a false "enabled" (old code just returned is_enabled()).
-    let actual = mgr.is_enabled().map_err(|e| e.to_string())?;
-    if actual != enabled {
-        return Err(format!(
-            "autostart write did not stick (wanted {}, system reports {})",
-            enabled, actual
-        ));
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mgr = app.autolaunch();
+        if enabled {
+            mgr.enable().map_err(|e| e.to_string())?;
+        } else {
+            mgr.disable().map_err(|e| e.to_string())?;
+        }
+        // Read the system state back instead of trusting the write.
+        let actual = mgr.is_enabled().map_err(|e| e.to_string())?;
+        if actual != enabled {
+            return Err(format!(
+                "autostart write did not stick (wanted {}, system reports {})",
+                enabled, actual
+            ));
+        }
+        Ok(actual)
     }
-    Ok(actual)
 }
 
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> Result<bool, String> {
     // A read error must not be reported as "not enabled": that silently
     // cleared the saved checkbox and desynced UI from the real system state.
-    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+    #[cfg(target_os = "windows")]
+    {
+        Ok(win_autostart_healthy(&app))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        app.autolaunch().is_enabled().map_err(|e| e.to_string())
+    }
 }
 
 /// v0.7.6: expose the REAL OS state for the "autostart still fails" case.
@@ -692,12 +902,13 @@ fn get_autostart(app: AppHandle) -> Result<bool, String> {
 /// logon, and whether Task Manager disabled the entry.
 #[tauri::command]
 fn get_autostart_diagnostics(app: AppHandle) -> Result<serde_json::Value, String> {
-    let mut v = windows_autostart_probe();
+    let mut v = windows_autostart_probe(&app);
+    #[cfg(target_os = "windows")]
+    let healthy = win_autostart_healthy(&app);
+    #[cfg(not(target_os = "windows"))]
+    let healthy = app.autolaunch().is_enabled().unwrap_or(false);
     if let Some(o) = v.as_object_mut() {
-        o.insert(
-            "pluginEnabled".into(),
-            serde_json::json!(app.autolaunch().is_enabled().unwrap_or(false)),
-        );
+        o.insert("healthy".into(), serde_json::json!(healthy));
         o.insert(
             "savedIntent".into(),
             serde_json::json!(read_prefs(&app).autostart),
@@ -711,17 +922,33 @@ fn get_autostart_diagnostics(app: AppHandle) -> Result<serde_json::Value, String
 /// "修复开机自启" button and by the startup self-heal path.
 #[tauri::command]
 fn repair_autostart(app: AppHandle) -> Result<serde_json::Value, String> {
-    let mgr = app.autolaunch();
-    // disable() first so a stale/unquoted value cannot survive.
-    let _ = mgr.disable();
-    mgr.enable().map_err(|e| e.to_string())?;
-    let value = repair_windows_run_value()?;
-    let mut v = windows_autostart_probe();
-    if let Some(o) = v.as_object_mut() {
-        o.insert("pluginEnabled".into(), serde_json::json!(mgr.is_enabled().unwrap_or(false)));
-        o.insert("repairedCommand".into(), serde_json::json!(value));
+    #[cfg(target_os = "windows")]
+    {
+        // v0.7.7: 一键修复 = 清历史脏值 → 写带引号正确命令 → 清禁用标记 → 回读。
+        let value = repair_windows_run_value(&app)?;
+        let mut v = windows_autostart_probe(&app);
+        if let Some(o) = v.as_object_mut() {
+            o.insert("repairedCommand".into(), serde_json::json!(value));
+            o.insert("healthy".into(), serde_json::json!(win_autostart_healthy(&app)));
+        }
+        // 用户点了修复，说明意图就是「要开」，同步写回意图。
+        patch_prefs(&app, "autostart", serde_json::json!(true));
+        return Ok(v);
     }
-    Ok(v)
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mgr = app.autolaunch();
+        let _ = mgr.disable();
+        mgr.enable().map_err(|e| e.to_string())?;
+        let mut v = windows_autostart_probe(&app);
+        if let Some(o) = v.as_object_mut() {
+            o.insert(
+                "enabled".into(),
+                serde_json::json!(mgr.is_enabled().unwrap_or(false)),
+            );
+        }
+        Ok(v)
+    }
 }
 
 #[tauri::command]
@@ -789,7 +1016,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock v0.7.6 · 设置")
+    .title("Desk Clock v0.7.7 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -917,7 +1144,7 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock v0.7.6 · {}", label))
+    .title(format!("Desk Clock v0.7.7 · {}", label))
     // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
     .inner_size(
         cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
@@ -2003,7 +2230,7 @@ async fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), St
             "alert",
             WebviewUrl::App(PathBuf::from("alert.html")),
         )
-        .title("Desk Clock v0.7.6 · 提醒")
+        .title("Desk Clock v0.7.7 · 提醒")
         // v0.7.6 二次修订：不再固定 260px（内容只占上半截，下方留一大块
         // 空白 = 主人截图里的「上下黑边」）。先给一个紧凑初值，前端量出
         // 真实内容高度后立刻通过 resize_alert 精确调整。
@@ -2217,6 +2444,10 @@ pub fn run() {
         ))
         .setup(|app| {
             let handle = app.handle();
+            // v0.7.7: 先记启动日志 —— 重启后一看就知道「登录时 Windows 到底有没有
+            // 把程序拉起来」，不用再靠猜。
+            #[cfg(target_os = "windows")]
+            win_log_startup(handle);
             let prefs = read_prefs(handle);
             app.manage(PrefsState(Mutex::new(prefs.clone())));
             app.manage(TimerState(Mutex::new(TimerSnapshot::default())));
@@ -2225,17 +2456,26 @@ pub fn run() {
             // 重新注册一次。用户在应用里主动关闭时 prefs 会写成 false，
             // 因此不会违背用户意图强行打开。
             if prefs.autostart {
-                let mgr = handle.autolaunch();
-                if !mgr.is_enabled().unwrap_or(false) {
-                    if let Err(e) = mgr.enable() {
-                        eprintln!("Desk Clock: autostart re-enable failed: {}", e);
+                #[cfg(target_os = "windows")]
+                {
+                    // v0.7.7: 自愈 = 直接重写自管 Run 值（带引号）并回读校验；
+                    // 这样路径空格、旧值名残留、被任务管理器禁用三种历史故障
+                    // 都会在每次启动时自动纠正。
+                    if !win_autostart_healthy(handle) {
+                        match repair_windows_run_value(handle) {
+                            Ok(v) => eprintln!("Desk Clock: autostart repaired -> {}", v),
+                            Err(e) => eprintln!("Desk Clock: autostart repair failed: {}", e),
+                        }
                     }
                 }
-                // v0.7.6: even when the entry EXISTS it may be broken (unquoted
-                // path / stale install location). Always rewrite + verify it on
-                // startup so a reboot actually launches this executable.
-                if let Err(e) = repair_windows_run_value() {
-                    eprintln!("Desk Clock: autostart Run value repair failed: {}", e);
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let mgr = handle.autolaunch();
+                    if !mgr.is_enabled().unwrap_or(false) {
+                        if let Err(e) = mgr.enable() {
+                            eprintln!("Desk Clock: autostart re-enable failed: {}", e);
+                        }
+                    }
                 }
             }
 
