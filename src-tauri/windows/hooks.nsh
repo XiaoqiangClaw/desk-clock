@@ -98,7 +98,7 @@
     ; --- 用户之前已登记过开机自启 → 写入/纠正为正确命令 ---
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Desk Clock" '"$INSTDIR\desk-clock.exe" --startup'
     ; 清掉「启动应用已禁用」字节（否则登录时直接跳过）
-    WriteRegBin HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Desk Clock" 02 00 00 00 00 00 00 00 00 00 00 00
+    WriteRegBin HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Desk Clock" "020000000000000000000000"
     ; 清掉历史错值名（v0.7.6 写错的那个）
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "desk-clock"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "DeskClock"

@@ -107,7 +107,8 @@ check("installer writes a quoted absolute path with --startup",
       "'\"$INSTDIR\\desk-clock.exe\" --startup'" in hooks)
 
 check("installer clears the StartupApproved disabled byte",
-      "StartupApproved" in hooks and "02 00 00 00 00 00 00 00 00 00 00 00" in hooks)
+      "StartupApproved" in hooks and '"020000000000000000000000"' in hooks,
+      "NSIS WriteRegBin takes a hex string, not separate bytes")
 
 check("installer deletes the legacy value names",
       'DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "desk-clock"' in hooks
