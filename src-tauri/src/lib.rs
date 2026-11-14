@@ -35,7 +35,11 @@ use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::MacosLauncher;
+// v0.7.7: Windows 自启改为自管注册表，插件只剩 macOS/Linux 用 ——
+// 在 Windows target 下这个 trait 不再被用到，避免 unused_imports 警告。
+#[cfg(not(target_os = "windows"))]
+use tauri_plugin_autostart::ManagerExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
