@@ -114,15 +114,15 @@ check("i18n covers legacy + log strings (zh + en)",
       i18n.count("autostartDiagLegacy") == 2 and i18n.count("autostartDiagLog") == 2)
 
 # --------------------------------------------------------------- H. versions
-check("APP_VERSION is 0.7.7", "var APP_VERSION = '0.7.7';" in app)
-check("Cargo.toml version is 0.7.7", 'version = "0.7.7"' in cargo)
-check("tauri.conf.json version is 0.7.7", conf.get("version") == "0.7.7")
-check("lib.rs native titles all v0.7.7 (3)",
-      len(re.findall(r"Desk Clock v0\.7\.7", lib)) == 3,
-      len(re.findall(r"Desk Clock v0\.7\.7", lib)))
-check("README documents v0.7.7", "v0.7.7" in readme)
-check("CHANGELOG has a v0.7.7 section", "## v0.7.7" in changelog or "v0.7.7 更新详情" in changelog)
-check("release.yml body targets v0.7.7", "## 🕐 Desk Clock v0.7.7" in rels)
+check("APP_VERSION is 0.7.8", "var APP_VERSION = '0.7.8';" in app)
+check("Cargo.toml version is 0.7.8", 'version = "0.7.8"' in cargo)
+check("tauri.conf.json version is 0.7.8", conf.get("version") == "0.7.8")
+check("lib.rs native titles all v0.7.8 (3)",
+      len(re.findall(r"Desk Clock v0\.7\.8", lib)) == 3,
+      len(re.findall(r"Desk Clock v0\.7\.8", lib)))
+check("README documents v0.7.8", "v0.7.8" in readme)
+check("CHANGELOG has a v0.7.8 section", "## v0.7.8" in changelog or "v0.7.8 更新详情" in changelog)
+check("release.yml body targets v0.7.8", "## 🕐 Desk Clock v0.7.8" in rels)
 check("CI static checks include verify_v077.py",
       "scripts/verify_v077.py" in rd(".github/workflows/build.yml"))
 

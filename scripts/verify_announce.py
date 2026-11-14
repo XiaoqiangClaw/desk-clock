@@ -158,16 +158,16 @@ check("app.js syncs + binds announcement UI",
 check("app.js plays chime before speaking",
       "Alarm.playChime" in appjs)
 
-# version strings must be consistent at 0.7.7 (this is now a release)
-check("APP_VERSION is 0.7.7", "var APP_VERSION = '0.7.7';" in appjs)
-check("Cargo.toml version is 0.7.7", 'version = "0.7.7"' in cargo)
-check("tauri.conf.json version is 0.7.7", '"version": "0.7.7"' in conf)
-check("lib.rs native titles are v0.7.7",
-      len(re.findall(r"Desk Clock v0\.7\.7", lib)) == 3,
-      len(re.findall(r"Desk Clock v0\.7\.7", lib)))
+# version strings must be consistent at 0.7.8 (this is now a release)
+check("APP_VERSION is 0.7.8", "var APP_VERSION = '0.7.8';" in appjs)
+check("Cargo.toml version is 0.7.8", 'version = "0.7.8"' in cargo)
+check("tauri.conf.json version is 0.7.8", '"version": "0.7.8"' in conf)
+check("lib.rs native titles are v0.7.8",
+      len(re.findall(r"Desk Clock v0\.7\.8", lib)) == 3,
+      len(re.findall(r"Desk Clock v0\.7\.8", lib)))
 check("docs mention v0.7 announcement",
       "播报" in rd("README.md") and "Announce" in rd("docs/SPEC.md")
-      and "v0.7.7" in rd("CHANGELOG.md"))
+      and "v0.7.8" in rd("CHANGELOG.md"))
 
 # ============================== B. browser ==============================
 from playwright.sync_api import sync_playwright

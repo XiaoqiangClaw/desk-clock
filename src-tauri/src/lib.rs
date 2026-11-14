@@ -288,6 +288,20 @@ fn detect_elevated() -> bool {
         .unwrap_or(false)
 }
 
+/// 清除 RUNASADMIN 兼容层（HKCU AppCompatFlags\Layers）。
+///
+/// v0.7.8：这是开机自启的第 5 个真根因 —— RUNASADMIN 会让 Windows 在**登录阶段**
+/// 静默跳过该 exe 的启动项（登录时没有桌面可以弹 UAC）。
+#[cfg(target_os = "windows")]
+fn clear_admin_compat() -> Result<(), String> {
+    set_admin_compat(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn clear_admin_compat() -> Result<(), String> {
+    Ok(())
+}
+
 /// HKCU AppCompatFlags\Layers: Windows applies RUNASADMIN to this executable
 /// on EVERY launch (double-click, shortcut and the autostart Run entry alike).
 #[cfg(target_os = "windows")]
@@ -323,8 +337,37 @@ fn set_admin_compat(_enabled: bool) -> Result<(), String> {
 
 // ------------------------------------------------------- Windows autostart
 //
-// 🔴 v0.7.7（第 4 次修，这次是真根因）
+// 🔴 v0.7.8（第 5 次修，这次抓到真凶：RUNASADMIN 兼容层）
 //
+// 主人真机证据（2026-11-14，Windows 11 build 26200）：
+//   注册表 Run 值完全正确 —— 带引号、指向真实存在的 v0.7.7 exe；
+//   StartupApproved 两个字节都是 02（启用）；但 startup.log 里只有 MANUAL、
+//   从来没有 AUTOSTART —— 说明 **Windows 登录时压根没去执行它**。
+//   而 AppCompatFlags\Layers 里有一条：
+//       HKCU\...\AppCompatFlags\Layers
+//         "C:\Users\xiaoq\AppData\Local\Desk Clock\desk-clock.exe" = RUNASADMIN
+//
+// RUNASADMIN 的含义是「这个 exe 每次启动都弹 UAC 提权」。在**登录阶段**（开机自启）
+// 根本没有交互桌面可以弹 UAC，Windows 就把这个启动项**静默跳过** ——
+// 注册表里一切正常、火绒/任务管理器也显示「已启用」，但永远没有进程。
+//
+// v0.7.7 只清了 StartupApproved，没碰 AppCompatFlags\Layers，所以这一版依然失败。
+//
+// 另一个结构性矛盾：v0.7.7 的自愈逻辑写在 `.setup()` 里，**只有程序已经启动才跑**；
+// 而开机自启失败 → 程序永远起不来 → 自愈永远不执行 = 鸡生蛋死锁。
+//
+// 本版对策：
+//   1. 「开机自启」与「始终以管理员身份启动」在 Windows 上**互斥**（登录时弹不了 UAC）：
+//      · 开启开机自启 → 自动清掉 RUNASADMIN 兼容层，并把 prefs.run_as_admin 置 false
+//        （同时回传 clearedAdminMode，让界面明确告知用户，不做黑箱操作）；
+//      · 想开管理员模式但开机自启已开 → 直接报错，不允许两者共存。
+//   2. 「一键修复开机自启」同样清理 RUNASADMIN —— 修好自启就是本次的意图。
+//   3. 诊断面板新增 `adminCompatBlocking` 字段：RUNASADMIN 与 autostart 同时存在时
+//      直接点名「这会导致登录时静默跳过」。
+//   4. 自愈路径同步清理：启动时若 prefs.autostart 且不健康 → 重写 Run + 清 RUNASADMIN。
+//
+// ---------------------------------------------------------------------------
+// v0.7.7 的第 4 次修（值名写错）：
 // v0.7.6 的修复方向对（要加引号），但**值名写错了**：插件用
 // `package_info().name` 作为 Run 值名，而 Tauri 的 `PackageInfo.name` 取的是
 // tauri.conf.json 的 `productName`（本项目 = "Desk Clock"，**带空格**），
@@ -465,7 +508,13 @@ fn repair_windows_run_value(app: &AppHandle) -> Result<String, String> {
     // HKLM 那份通常要管理员权限；写不了也无妨（HKCU 已够本用户启动）。
     let _ = reg_add(WIN_APPROVED_KEY_HKLM, &name, "REG_BINARY", WIN_APPROVED_ENABLED_HEX);
 
-    // ---- 4. 精确回读校验 ----
+    // ---- 4. 🔴 v0.7.8：清掉 RUNASADMIN 兼容层 ----
+    // 「开机自启」与「始终以管理员身份启动」在 Windows 登录阶段互斥：
+    // 登录时没有交互桌面可以弹 UAC，Windows 会直接静默跳过这个启动项。
+    // 用户点「修复开机自启」的意图就是让自启生效，所以这里一并清理。
+    let _ = clear_admin_compat();
+
+    // ---- 5. 精确回读校验 ----
     let text = reg_query_raw(WIN_RUN_KEY, &name)
         .ok_or_else(|| "Run value disappeared after write".to_string())?;
     if !text.contains(&expected) {
@@ -476,6 +525,23 @@ fn repair_windows_run_value(app: &AppHandle) -> Result<String, String> {
         ));
     }
     Ok(expected)
+}
+
+/// 当前 exe 是否被打了 RUNASADMIN 兼容层（会让登录时的自启被静默跳过）。
+#[cfg(target_os = "windows")]
+fn win_admin_compat_present() -> bool {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    reg_query_raw(WIN_APPCOMPAT_LAYERS_KEY, &exe.as_os_str().to_string_lossy())
+        .map(|s| s.contains("RUNASADMIN"))
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn win_admin_compat_present() -> bool {
+    false
 }
 
 /// 当前是否已用「正确命令」登记（且没被任务管理器禁用）。
@@ -626,6 +692,9 @@ fn windows_autostart_probe(app: &AppHandle) -> serde_json::Value {
 
     let exe_exists = !exe.is_empty() && std::path::Path::new(&exe).exists();
 
+    // 🔴 v0.7.8：RUNASADMIN 与开机自启共存 = 登录时被静默跳过。
+    let admin_compat_blocking = elevated_compat && registered;
+
     serde_json::json!({
         "platform": "windows",
         "exeExists": exe_exists,
@@ -639,6 +708,7 @@ fn windows_autostart_probe(app: &AppHandle) -> serde_json::Value {
         "pathMatchesExe": matches,
         "legacyValues": legacy,
         "runAsAdminCompat": elevated_compat,
+        "adminCompatBlocking": admin_compat_blocking,
         "disabledByTaskManager": disabled_by_task_manager,
         "startupApprovedHex": approved_hex,
         "startupLog": win_read_startup_log(app, 20),
@@ -886,6 +956,74 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     }
 }
 
+/// 🔴 v0.7.8：开机自启与「始终以管理员身份启动」在 Windows 上互斥。
+///
+/// 真机证据（主人 Win11，2026-11-14）：Run 值完全正确、带引号、指向存在的 exe、
+/// StartupApproved 也是启用的，但 startup.log 里只有 MANUAL 从没有 AUTOSTART ——
+/// 因为 AppCompatFlags\Layers 里给这个 exe 写了 RUNASADMIN：登录阶段没有交互桌面
+/// 可以弹 UAC，Windows 就静默跳过这个启动项。注册表一切正常，进程却永远不出现。
+///
+/// 因此：开启开机自启时自动清掉 RUNASADMIN，并把 prefs.run_as_admin 置回 false
+/// （返回值里带 clearedAdminMode，界面据此明确告知用户，不做黑箱操作）。
+#[tauri::command]
+fn set_autostart_ex(
+    app: AppHandle,
+    state: State<'_, PrefsState>,
+    enabled: bool,
+) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cleared_admin_mode = false;
+        if enabled {
+            // 先清 RUNASADMIN（否则写了 Run 值也白写）。
+            if win_admin_compat_present() {
+                clear_admin_compat()?;
+                cleared_admin_mode = true;
+                let mut prefs = state.0.lock().map_err(|e| e.to_string())?.clone();
+                prefs.run_as_admin = false;
+                write_prefs(&app, &prefs)?;
+                {
+                    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+                    *guard = prefs.clone();
+                }
+                let _ = app.emit("prefs-changed", &prefs);
+            }
+            repair_windows_run_value(&app)?;
+            if !win_autostart_healthy(&app) {
+                return Err("autostart registration did not stick".to_string());
+            }
+            Ok(serde_json::json!({
+                "enabled": true,
+                "clearedAdminMode": cleared_admin_mode,
+            }))
+        } else {
+            win_autostart_disable(&app);
+            Ok(serde_json::json!({
+                "enabled": win_autostart_healthy(&app),
+                "clearedAdminMode": false,
+            }))
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = state;
+        let mgr = app.autolaunch();
+        if enabled {
+            mgr.enable().map_err(|e| e.to_string())?;
+        } else {
+            mgr.disable().map_err(|e| e.to_string())?;
+        }
+        let actual = mgr.is_enabled().map_err(|e| e.to_string())?;
+        if actual != enabled {
+            return Err(format!(
+                "autostart write did not stick (wanted {}, system reports {})",
+                enabled, actual
+            ));
+        }
+        Ok(serde_json::json!({ "enabled": actual, "clearedAdminMode": false }))
+    }
+}
+
 #[tauri::command]
 fn get_autostart(app: AppHandle) -> Result<bool, String> {
     // A read error must not be reported as "not enabled": that silently
@@ -929,11 +1067,16 @@ fn repair_autostart(app: AppHandle) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "windows")]
     {
         // v0.7.7: 一键修复 = 清历史脏值 → 写带引号正确命令 → 清禁用标记 → 回读。
+        // v0.7.8: 额外清 RUNASADMIN（它会让登录时静默跳过启动项）。
         let value = repair_windows_run_value(&app)?;
         let mut v = windows_autostart_probe(&app);
         if let Some(o) = v.as_object_mut() {
             o.insert("repairedCommand".into(), serde_json::json!(value));
             o.insert("healthy".into(), serde_json::json!(win_autostart_healthy(&app)));
+            o.insert(
+                "clearedAdminMode".into(),
+                serde_json::json!(!win_admin_compat_present()),
+            );
         }
         // 用户点了修复，说明意图就是「要开」，同步写回意图。
         patch_prefs(&app, "autostart", serde_json::json!(true));
@@ -967,6 +1110,19 @@ fn set_run_as_admin(
     state: State<'_, PrefsState>,
     enabled: bool,
 ) -> Result<PrivilegeStatus, String> {
+    // 🔴 v0.7.8：开机自启与「始终以管理员身份启动」在 Windows 互斥。
+    // RUNASADMIN 会让 Windows 在登录阶段弹不出 UAC → 静默跳过启动项 →
+    // 开机自启永远不生效（主人 Win11 真机已验证：注册表全对，但进程从不出现）。
+    // 所以要开管理员模式，必须先关掉开机自启；反过来也一样。
+    if enabled {
+        let cur = state.0.lock().map_err(|e| e.to_string())?.clone();
+        if cur.autostart {
+            return Err(
+                "ADMIN_AUTOSTART_CONFLICT:开机自启已开启，两者互斥（登录时弹不出 UAC，会导致开机自启静默失效）。请先关闭开机自启再开启管理员模式。"
+                    .into(),
+            );
+        }
+    }
     set_admin_compat(enabled)?;
     let mut prefs = state.0.lock().map_err(|e| e.to_string())?.clone();
     prefs.run_as_admin = enabled && can_elevate();
@@ -1020,7 +1176,7 @@ fn ensure_settings_window(app: &AppHandle, target: Option<&str>) -> Result<(), S
         "settings",
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title("Desk Clock v0.7.7 · 设置")
+    .title("Desk Clock v0.7.8 · 设置")
     // v0.5.1：固定尺寸（用户要求）。内容再多也在面板内用滚轮滚动，
     // 隐藏滚动条；760×700 已能容纳最复杂的一页，且兼容 1366×768 小屏。
     .inner_size(760.0, 700.0)
@@ -1148,7 +1304,7 @@ fn spawn_extra_window(
         &win_label,
         WebviewUrl::App(PathBuf::from("index.html")),
     )
-    .title(format!("Desk Clock v0.7.7 · {}", label))
+    .title(format!("Desk Clock v0.7.8 · {}", label))
     // v0.6.2：优先用前端测量并持久化的内容尺寸；缺省回退旧固定外壳。
     .inner_size(
         cfg.get("w").and_then(|v| v.as_f64()).filter(|v| *v > 0.0).unwrap_or(640.0),
@@ -2234,7 +2390,7 @@ async fn show_alert(app: AppHandle, payload: serde_json::Value) -> Result<(), St
             "alert",
             WebviewUrl::App(PathBuf::from("alert.html")),
         )
-        .title("Desk Clock v0.7.7 · 提醒")
+        .title("Desk Clock v0.7.8 · 提醒")
         // v0.7.6 二次修订：不再固定 260px（内容只占上半截，下方留一大块
         // 空白 = 主人截图里的「上下黑边」）。先给一个紧凑初值，前端量出
         // 真实内容高度后立刻通过 resize_alert 精确调整。
@@ -2465,10 +2621,23 @@ pub fn run() {
                     // v0.7.7: 自愈 = 直接重写自管 Run 值（带引号）并回读校验；
                     // 这样路径空格、旧值名残留、被任务管理器禁用三种历史故障
                     // 都会在每次启动时自动纠正。
+                    // v0.7.8: RUNASADMIN 兼容层也会让登录时的自启被静默跳过，
+                    // 一并清掉（repair_windows_run_value 内部已处理）。
+                    //
+                    // ⚠️ 结构性局限（v0.7.8 未消除）：自愈写在 .setup() 里，
+                    // 只有程序**已经启动**才会跑。若开机自启坏了 → 程序永远起不来
+                    // → 自愈永远不执行（鸡生蛋）。所以开机自启的正确性必须由
+                    // 「安装器写入」或「用户手动运行一次」来保证，不能只靠自愈。
                     if !win_autostart_healthy(handle) {
                         match repair_windows_run_value(handle) {
                             Ok(v) => eprintln!("Desk Clock: autostart repaired -> {}", v),
                             Err(e) => eprintln!("Desk Clock: autostart repair failed: {}", e),
+                        }
+                    } else if win_admin_compat_present() {
+                        // Run 值本身是好的，但 RUNASADMIN 会让登录时静默跳过 —— 同样要清。
+                        match clear_admin_compat() {
+                            Ok(_) => eprintln!("Desk Clock: autostart blocked by RUNASADMIN -> cleared"),
+                            Err(e) => eprintln!("Desk Clock: clear RUNASADMIN failed: {}", e),
                         }
                     }
                 }
@@ -2627,6 +2796,7 @@ pub fn run() {
             preset_position,
             set_click_through,
             set_autostart,
+            set_autostart_ex,
             get_autostart,
             get_autostart_diagnostics,
             repair_autostart,

@@ -16,7 +16,7 @@
   // Native window base size at scale=1 (mirrors tauri.conf.json).
   var BASE_W = 640, BASE_H = 220;
   var CUSTOM = '__custom__';
-  var APP_VERSION = '0.7.7';
+  var APP_VERSION = '0.7.8';
   var PROJECT_URL = 'project';      // 传给 Rust open_link 的标识符
   var RELEASES_URL = 'releases';    // 同上（真实 URL 由 Rust 解析）
 
@@ -670,7 +670,14 @@
         renderPrivilege(); e.target.disabled = false;
       }).catch(function (err) {
         e.target.checked = !wanted; e.target.disabled = false;
-        var b = byId('perm-status'); if (b) b.textContent = String(err || 'failed');
+        var msg = String(err || 'failed');
+        // v0.7.8：开机自启与管理员模式互斥，给出可执行的中文提示。
+        if (msg.indexOf('ADMIN_AUTOSTART_CONFLICT') >= 0) {
+          msg = (STRINGS_LANG() === 'en')
+            ? 'Autostart is on, so "always run as administrator" cannot be enabled — Windows cannot show UAC at logon and would silently skip the startup entry. Turn autostart off first if you really need admin rights.'
+            : '当前已开启「开机自启」，两者互斥：Windows 在登录阶段弹不出 UAC，开机自启会被静默跳过。若确实需要管理员权限，请先关闭开机自启。';
+        }
+        var b = byId('perm-status'); if (b) b.textContent = msg;
       });
     });
     byId('perm-elevate-now').addEventListener('click', function () {
@@ -1175,6 +1182,12 @@
     if (d.expectedCommand) lines.push('应为: ' + d.expectedCommand);
     if (d.exeExists === false) lines.push('⚠ ' + I18n.t(L, 'autostartDiagExeMissing'));
     if (d.runAsAdminCompat) lines.push('⚠ ' + I18n.t(L, 'autostartDiagAdmin'));
+    // v0.7.8：RUNASADMIN + 开机自启共存 = 登录时被 Windows 静默跳过（真机已验证）。
+    if (d.adminCompatBlocking) {
+      lines.push('⚠ ' + (L === 'en'
+        ? 'RUNASADMIN is set for this exe, so Windows silently skips the startup entry at logon (no UAC can be shown then). This is the confirmed root cause of "enabled but never starts".'
+        : '本程序被设置了「以管理员身份运行」兼容层，Windows 在登录阶段弹不出 UAC，会静默跳过这个启动项 —— 这就是「显示已开启、重启却不启动」的已确认真凶。'));
+    }
     if (d.disabledByTaskManager) lines.push('⚠ ' + I18n.t(L, 'autostartDiagDisabled'));
     if (d.legacyValues && d.legacyValues.length) {
       // v0.7.7：旧版本写错值名留下的脏记录，是「显示已开启、重启不启动」的元凶之一。
@@ -1473,11 +1486,23 @@
       var wanted = e.target.checked;
       state.autostart = wanted;
       Prefs.save({ autostart: wanted });
-      Prefs.setAutostart(wanted).then(function (actual) {
+      Prefs.setAutostart(wanted).then(function (res) {
+        // v0.7.8：setAutostart 现在返回 { enabled, clearedAdminMode }。
+        var actual = (res && typeof res === 'object') ? !!res.enabled : !!res;
         state.autostart = actual; Prefs.save({ autostart: actual });
         byId('pref-autostart').checked = actual;
         var st = byId('autostart-status');
-        if (st) { st.hidden = true; st.textContent = ''; }
+        if (st) {
+          if (res && res.clearedAdminMode) {
+            // 明确告知：为了开机自启能生效，管理员兼容层已被清掉。
+            st.hidden = false;
+            st.textContent = (STRINGS_LANG() === 'en')
+              ? 'Autostart enabled. "Always run as administrator" was turned off — it blocks autostart at logon (Windows cannot show UAC then).'
+              : '已开启开机自启。为保证开机能自动启动，已关闭「始终以管理员身份启动」——它在登录阶段弹不出 UAC，会导致开机自启静默失效。';
+          } else {
+            st.hidden = true; st.textContent = '';
+          }
+        }
       }).catch(function () {
         // v0.7.5: 写入/回读失败时绝不假装「已关闭」。重新读取系统真值，
         // 并如实提示；旧实现会把 prefs 写回 false 造成状态相反。

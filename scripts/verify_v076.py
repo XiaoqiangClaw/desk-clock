@@ -133,13 +133,13 @@ check("UAC / RUNASADMIN conflict is explicitly surfaced",
 
 # ------------------------------------------------------------ C. packaging
 check("version bumped past 0.7.6",
-      "var APP_VERSION = '0.7.7';" in app
-      and '"version": "0.7.7"' in rd("src-tauri/tauri.conf.json")
-      and 'version = "0.7.7"' in rd("src-tauri/Cargo.toml"))
+      "var APP_VERSION = '0.7.8';" in app
+      and '"version": "0.7.8"' in rd("src-tauri/tauri.conf.json")
+      and 'version = "0.7.8"' in rd("src-tauri/Cargo.toml"))
 check("CHANGELOG documents the autostart root cause",
       "v0.7.6" in rd("CHANGELOG.md") and "auto-launch" in rd("CHANGELOG.md"))
-check("release body targets v0.7.7",
-      "## 🕐 Desk Clock v0.7.7" in rd(".github/workflows/release.yml"))
+check("release body targets v0.7.8",
+      "## 🕐 Desk Clock v0.7.8" in rd(".github/workflows/release.yml"))
 check("new regression script is in CI static checks",
       "scripts/verify_v076.py" in rd(".github/workflows/build.yml"))
 

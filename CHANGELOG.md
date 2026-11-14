@@ -21,9 +21,62 @@
 | v0.7.5 | 🛠️ **全量缺陷修复 + 真·自动更新**：修复居中提醒窗透明不可见却吞点击（改不透明 + Rust 侧超时兜底自动关窗）、托盘/设置页退出无效、托盘双击无反应、开机自启失败吞错与启动自愈、日历自动同步开关不持久、定时任务重复排程/取消状态不同步、提权取消后单实例锁丢失、隐藏窗口空转定时器、配置消毒与日历数据校验、一次性规则缺失、自定义负时区标签、铃声试听计时器、启动校时重复调用等；新增闹钟「提醒内容」；移除无声的英文播报并统一中文报时；一键更新改为应用内自动下载安装、失败自动回退下载页；release 流程补齐静态门禁 |
 | v0.7.6 | 🔴 **修复真根因：闹钟/定时提醒弹窗仍不显示 + Windows 开机自启仍失败**；🛠️ 真机两轮视觉修订（卡片铺满 → 窗口按内容自适应高度，14:17 主人验收「显示正常」）。`show_alert` 原为同步命令内直接 `WebviewWindowBuilder::build()`，官方明确该用法在 Windows WebView2 会与主线程互锁（弹窗根本没被创建），现改为 async 命令 + 独立线程建窗 + 并发无状态保护 + 建窗失败时页内提醒兜底 + 自动关窗代次化；自启方面定位到上游 `auto-launch 0.6.0` 写入注册表 Run 值时**未给 exe 路径加引号**，含空格的安装目录会被系统解析成 `C:\Program` 而静默不启动（且 `is_enabled()` 只查值存在、界面误报「已开启」），现启用/自愈/一键修复时统一改写为带引号绝对路径并回读校验，同时兼容 HKLM、诊断 UAC 兼容层与任务管理器禁用；设置页新增「检测开机自启状态 / 一键修复」并展示注册表真实值 |
 | v0.7.7 | 🔴 **Windows 开机自启彻底修复（第 4 次、真根因）**：上游插件用 `package_info().name`（= `tauri.conf.json` 的 `productName` "Desk Clock"，带空格）作注册表 `Run` 的**值名**，而 v0.7.6 的修复写到了 Cargo 包名 `desk-clock` —— 机器上两条并存：插件那条无引号（登录被截断成 `C:\...\Desk` 静默失败）＋ 我们那条正确，但 `is_enabled()` 只读插件那条 → 界面永远「已开启」、重启永远不启动、旧值永不清理。本版 Windows 自启**完全自管**：值名统一取 `package_info().name`、写入带引号绝对路径并精确回读、删除历史遗留值名、清 StartupApproved「已禁用」字节、每次启动写 `startup.log`（区分 AUTOSTART/MANUAL，可证明系统是否真的在登录时拉起程序）。诊断面板新增值名 / 期望命令 / 遗留项 / 最近启动记录 |
+| v0.7.8 | 🔴 **Windows 开机自启第 5 次修复（真根因 #3：RUNASADMIN 兼容层）**：主人 Win11 真机（build 26200）诊断报告证实 —— 注册表 Run 值**完全正确**（带引号、指向真实存在的 v0.7.7 exe）、`StartupApproved` 两处字节均为 02（启用）、火绒与任务管理器都显示「已启用」，但 `startup.log` 里**只有 MANUAL 从来没有 AUTOSTART**：Windows 登录时压根没执行它。真凶是 `HKCU\...\AppCompatFlags\Layers` 里给本 exe 写了 `RUNASADMIN` —— 该兼容层要求每次启动弹 UAC，而**登录阶段没有交互桌面可以弹 UAC**，Windows 于是**静默跳过**这个启动项。本版：① 开启/修复开机自启一律清掉 RUNASADMIN 兼容层，并把 `prefs.run_as_admin` 置回 false（界面明确告知，不做黑箱操作）；② 「开机自启」与「始终以管理员身份启动」在 Windows 上**互斥**，后者在自启已开时直接报错并给出可执行提示；③ 诊断新增 `adminCompatBlocking` 字段直点此真凶；④ **安装器自己写启动项**（NSIS post-install 钩子：写带引号 Run 值、清 StartupApproved、删历史错值名、清 RUNASADMIN），打破「程序起不来 → 自愈跑不了 → 永远修不好」的死锁；⑤ 新增回归 `scripts/verify_v078.py` |
 
 各版本安装包见 [Releases](https://github.com/xiaoqiangclub/desk-clock/releases)。
 
+
+## v0.7.8 更新详情（2026-11-14）
+
+### 🔴 Windows 开机自启：RUNASADMIN 兼容层在登录时被静默跳过（真根因 #3）
+
+v0.7.7 已经把注册表这一层修对了，但主人 2026-11-14 在 Windows 11（build 26200）真机复测仍然不启动。
+独立诊断工具在主人机器上跑出的报告给出了决定性证据：
+
+```
+[2/7] HKCU\...\Run
+    [Desk Clock] = "C:\Users\xiaoq\AppData\Local\Desk Clock\desk-clock.exe" --startup
+        带引号: 是      目标存在: 是
+[3/7] StartupApproved\Run  →  02 00 00 00 ...  => 启用
+    HKCU\...\AppCompatFlags\Layers
+    ["C:\Users\xiaoq\AppData\Local\Desk Clock\desk-clock.exe"] = RUNASADMIN
+        <== 「以管理员身份启动」会在登录时卡住 UAC = 静默不启动
+[4/7] startup.log  →  只有 MANUAL，从没有 AUTOSTART
+```
+
+逐条对照可以确认：**注册表这一层已经完全正确**（值名对、带引号、目标存在、未被禁用），
+但 Windows 在登录时**压根没有去执行它** —— 因为 `AppCompatFlags\Layers` 给这个 exe 打了
+`RUNASADMIN` 兼容层。该兼容层的语义是「这个 exe 每次启动都要弹 UAC 提权」，
+而在**登录阶段**系统还没有交互桌面可以弹 UAC，Windows 就把这个启动项**静默跳过**。
+于是注册表一切正常、火绒与任务管理器都显示「已启用」，进程却永远不出现。
+
+### 为什么 v0.7.7 的自愈救不了
+
+v0.7.7 的自愈逻辑写在 `.setup()` 里 —— **只有程序已经启动才会执行**。
+而开机自启坏了 → 程序永远起不来 → 自愈永远不执行 = 鸡生蛋死锁。
+这条死锁不是靠再加一次自愈能打破的，必须让**安装器**在覆盖安装时就把启动项写对。
+
+### 本版改动
+
+| 层 | 改动 |
+|---|---|
+| 注册表写入 | `repair_windows_run_value()` 额外清掉本 exe 的 `RUNASADMIN` 兼容层 |
+| 开启自启 | 新增 `set_autostart_ex`：先清 `RUNASADMIN` → 再写 Run 值 → 回传 `clearedAdminMode` |
+| 互斥保护 | `set_run_as_admin()` 在自启已开时直接报错 `ADMIN_AUTOSTART_CONFLICT`，并说明「登录时弹不出 UAC」 |
+| 启动自愈 | Run 值健康但存在 `RUNASADMIN` 时，同样清理 |
+| 诊断 | 新增 `adminCompatBlocking` 字段；界面直接点名「这就是显示已开启、重启却不启动的已确认真凶」 |
+| 界面 | 开启自启时若清掉了管理员模式，明确告知用户（不做黑箱操作）；管理员开关与自启冲突时给出可执行中文提示 |
+| **安装器** | NSIS `NSIS_HOOK_POSTINSTALL` 新增 `_DC_WRITE_AUTOSTOSTART`：当用户此前已登记过开机自启时，写入带引号的 `"<安装目录>\desk-clock.exe" --startup`、清 `StartupApproved` 禁用字节、删历史错值名、清 `RUNASADMIN` —— **由安装器打破鸡生蛋死锁** |
+
+### 验证
+
+- `scripts/verify_v078.py`：23 项静态断言（清 RUNASADMIN / 互斥保护 / 诊断字段 / 安装器写入 / 版本一致），全绿
+- `tools/windows/fix-deskclock-autostart.ps1` 升级为 v3：`.cmd` 改为纯 ASCII（此前中文 + `chcp 65001` 会让 cmd.exe 换码页后按字节偏移重读文件，把中文碎片当命令执行）、`.ps1` 存 UTF-8 BOM + CRLF、自动请求管理员权限；已用真实 PowerShell 7.4.6 官方 parser 校验 `PARSE_OK` 并整脚本干跑（7 步全通、中文正常、报告正常落盘）
+
+### 仍需主人真机确认（唯一未闭环项）
+
+覆盖安装 v0.7.8 → 重启 → 看时钟是否自动出现 → 设置页「检测开机自启状态」确认 `adminCompatBlocking` 不再报警。
+若仍不启动，看 `startup.log` 有没有 `AUTOSTART` 行：有 = Windows 拉起了它（问题在程序自身或安全软件）；无 = 系统层拦截。
 
 ## v0.7.7 更新详情（2026-11-14）
 

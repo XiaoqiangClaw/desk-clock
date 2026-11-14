@@ -124,9 +124,29 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Desk Clock ${{ github.ref_name }} 🕐"
           releaseBody: |
-            ## 🕐 Desk Clock v0.7.7
+            ## 🕐 Desk Clock v0.7.8
 
-            好看、好用、还跨平台的开源桌面时钟。本版把 **Windows 开机自启**彻底修到底：不再依赖上游插件，改为自己管注册表。
+            好看、好用、还跨平台的开源桌面时钟。本版继续把 **Windows 开机自启**修到底 —— 真机复测确认注册表已完全正确，真正拦住它的是 `RUNASADMIN` 兼容层。
+
+            ### 🔴 开机自启：真凶是「以管理员身份运行」兼容层
+
+            主人 Win11 真机诊断报告：注册表 `Run` 值**完全正确**（带引号、指向真实存在的 exe）、`StartupApproved` 两处均为「启用」、火绒与任务管理器都显示「已启用」，但 `startup.log` 里**只有 MANUAL 从没有 AUTOSTART** —— Windows 登录时压根没执行它。
+
+            真凶：`HKCU\...\AppCompatFlags\Layers` 里给本 exe 写了 `RUNASADMIN`。该兼容层要求每次启动弹 UAC，而**登录阶段没有交互桌面可以弹 UAC**，Windows 于是**静默跳过**这个启动项。
+
+            本版：开启/修复开机自启一律清掉 `RUNASADMIN`（并把管理员模式置回 false、界面明确告知）；「开机自启」与「始终以管理员身份运行」在 Windows 上**互斥**，后者在自启已开时直接报错说明原因；诊断新增 `adminCompatBlocking` 直点此真凶；**安装器自己写启动项**（NSIS post-install），打破「程序起不来 → 自愈跑不了 → 永远修不好」的死锁。
+
+            ### v0.7.7 已经修好的部分（继续保留）
+
+            Windows 自启完全自管：值名统一取 `product_info().name`、写入带引号的绝对路径并**精确回读比对**、顺手删除历史遗留值名、清掉「启动应用已禁用」标记、每次启动写 `startup.log`（区分 AUTOSTART / MANUAL，可直接证明 Windows 到底有没有在登录时拉起程序）。
+
+            ### v0.7.6 之前的根因（历史记录）
+
+            `tauri-plugin-autostart` 用 `app.package_info().name` 当注册表 `Run` 的**值名**，而 Tauri 的 `PackageInfo.name` 取的是 `tauri.conf.json` 的 `productName` —— 本项目是 **`Desk Clock`（带空格）**，不是 Cargo 包名 `desk-clock`。
+            - 所以机器上一直存在**两条**启动项：插件写的 `Desk Clock`（无引号，登录被截断成 `C:\...\Desk` 静默失败）和 v0.7.6 补写的 `desk-clock`（带引号、正确）。
+            - 而 `is_enabled()` 只读 `Desk Clock` 那条 → 界面永远显示「已开启」，重启永远不启动；旧值也永远不会被清掉。
+
+            v0.7.6 已经修过「路径没引号」：
 
             ### 🔴 开机自启：终于定位到「值名写错了」
 

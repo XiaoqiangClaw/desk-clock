@@ -459,9 +459,19 @@
   }
 
   function setAutostart(enabled) {
-    if (!isNative) return Promise.resolve(!!enabled);
-    return invoke('set_autostart', { enabled: !!enabled })
-      .then(function (res) { return res === undefined || res === null ? !!enabled : !!res; });
+    if (!isNative) return Promise.resolve({ enabled: !!enabled, clearedAdminMode: false });
+    // v0.7.8：改用 set_autostart_ex —— 开启自启时会顺带清掉 RUNASADMIN
+    // 兼容层（它会让登录时的启动项被 Windows 静默跳过），并回传
+    // clearedAdminMode，让界面能明确告知用户「管理员模式已关」而不是黑箱操作。
+    return invoke('set_autostart_ex', { enabled: !!enabled })
+      .then(function (res) {
+        if (!res || typeof res !== 'object') {
+          return { enabled: res === undefined || res === null ? !!enabled : !!res,
+                   clearedAdminMode: false };
+        }
+        return { enabled: res.enabled === undefined ? !!enabled : !!res.enabled,
+                 clearedAdminMode: !!res.clearedAdminMode };
+      });
     // v0.7.5：失败必须冒泡。旧实现吞成 false 会写回 prefs 并把开关弹回，
     // 造成「系统其实已启用、界面却显示关闭」。由 app.js 重新读取系统真值。
   }
@@ -681,6 +691,11 @@
     showAlert: showAlert, closeAlert: closeAlert,
     getAutostart: getAutostart,
     setAutostart: setAutostart,
+    setAutostartLegacy: function (enabled) {
+      if (!isNative) return Promise.resolve(!!enabled);
+      return invoke('set_autostart', { enabled: !!enabled })
+        .then(function (res) { return res === undefined || res === null ? !!enabled : !!res; });
+    },
     autostartDiagnostics: autostartDiagnostics,
     repairAutostart: repairAutostart,
     onChanged: onChanged,

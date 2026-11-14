@@ -68,6 +68,45 @@
   ${EndIf}
 !macroend
 
+; ---------------------------------------------------------------------------
+; v0.7.8：安装器直接写入开机自启启动项（打破“鸡生蛋”死锁）
+;
+; 之前的结构性缺陷：自愈逻辑写在程序的 .setup() 里，只有程序**已经启动**才会跑。
+; 而开机自启坏了 → 程序永远起不来 → 自愈永远不执行 → 永远修不好。
+; 主人真机（Win11 build 26200，2026-11-14）就是卡在这里：
+;   注册表 Run 值全对（带引号、指向存在的 exe）、StartupApproved 也是启用的，
+;   但 AppCompatFlags\Layers 里给这个 exe 写了 RUNASADMIN
+;   → 登录阶段弹不出 UAC → Windows 静默跳过启动项 → 进程从不出现。
+;
+; 对策：覆盖安装时由安装器自己把启动项写对：
+;   触发条件 = 用户之前已经登记过开机自启（Run 里存在 “Desk Clock” 或历史错值名），
+;   也就是用户确实表达过这个意图，安装器不擅自给新装的人开自启。
+;   动作：
+;   1. Run 值（HKCU）= “<安装目录>\desk-clock.exe” --startup（路径带引号）
+;   2. 清掉同名的 StartupApproved「已禁用」字节
+;   3. 删掉历史错值名（desk-clock / DeskClock）
+;   4. 清掉本 exe 的 RUNASADMIN 兼容层（它会让登录时静默跳过）
+; 写不动就写不动（不阻塞安装），程序首次启动后的自愈会接手。
+
+!macro _DC_WRITE_AUTOSTART
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Desk Clock"
+  ReadRegStr $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "desk-clock"
+  ReadRegStr $2 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "DeskClock"
+  ${If} $0 != ""
+  ${OrIf} $1 != ""
+  ${OrIf} $2 != ""
+    ; --- 用户之前已登记过开机自启 → 写入/纠正为正确命令 ---
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Desk Clock" '"$INSTDIR\desk-clock.exe" --startup'
+    ; 清掉「启动应用已禁用」字节（否则登录时直接跳过）
+    WriteRegBin HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Desk Clock" 02 00 00 00 00 00 00 00 00 00 00 00
+    ; 清掉历史错值名（v0.7.6 写错的那个）
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "desk-clock"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "DeskClock"
+    ; 清掉本 exe 的 RUNASADMIN 兼容层（登录时弹不出 UAC → 静默跳过）
+    DeleteRegValue HKCU "Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" "$INSTDIR\desk-clock.exe"
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro _DC_PREPARE_APP_EXIT
 !macroend
@@ -77,6 +116,7 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro _DC_WRITE_AUTOSTART
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
