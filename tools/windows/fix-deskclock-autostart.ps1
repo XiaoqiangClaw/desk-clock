@@ -1,4 +1,4 @@
-# Desk Clock 开机自启 · 诊断与一键修复（Windows 10/11）
+﻿# Desk Clock 开机自启 · 诊断与一键修复（Windows 10/11）
 #
 # 用法（两种都行）：
 #   A. 把本文件与 desk-clock.exe 放在同一目录，右键 fix-autostart.cmd → 以管理员身份运行（更稳）
@@ -14,6 +14,8 @@
 # 报告保存在桌面：DeskClock-autostart-report.txt
 
 $ErrorActionPreference = 'Continue'
+# UTF-8 console so Chinese output renders correctly in cmd/Windows Terminal.
+try { chcp 65001 > $null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $ProgressPreference = 'SilentlyContinue'
 
 $report = New-Object System.Collections.Generic.List[string]
@@ -31,6 +33,19 @@ Say '  Desk Clock 开机自启 · 诊断与一键修复'
 Say '=============================================================='
 Say ('时间: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin -and -not $env:DC_ELEVATED) {
+  # Not admin: re-launch ourselves elevated (one level only, guarded by env var).
+  try {
+    $env:DC_ELEVATED = '1'
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -WorkingDirectory $PSScriptRoot -ArgumentList @(
+      '-NoProfile','-ExecutionPolicy','Bypass','-File', ('"' + $PSScriptRoot + '\fix-deskclock-autostart.ps1"')
+    ) -Wait
+    exit 0
+  } catch {
+    Say ''
+    Say '    (没有提权成功，继续以普通权限运行 —— 只影响 HKLM 那部分写入，HKCU 自启照常修好)'
+  }
+}
 Say ('用户: ' + $env:USERDOMAIN + '\' + $env:USERNAME + '   管理员权限: ' + $isAdmin)
 Say ('系统: ' + [Environment]::OSVersion.VersionString)
 Say ''
@@ -303,7 +318,7 @@ foreach ($d in $outDirs) {
     try {
         if (-not (Test-Path -LiteralPath $d)) { continue }
         $cand = Join-Path $d 'DeskClock-autostart-report.txt'
-        $report | Set-Content -LiteralPath $cand -Encoding UTF8 -ErrorAction Stop
+        $report | Set-Content -LiteralPath $cand -Encoding UTF8 -ErrorAction Stop  # PS5.1 'UTF8' = with BOM -> Notepad reads Chinese correctly
         $out = $cand
         break
     } catch { }
