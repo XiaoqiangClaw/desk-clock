@@ -120,7 +120,7 @@
 
 ## 📥 下载安装包
 
-到 **[Releases](https://github.com/xiaoqiangclub/desk-clock/releases)** 下载对应平台（当前 **v0.7.8**）：
+到 **[Releases](https://github.com/XiaoqiangClaw/desk-clock/releases)** 下载对应平台（当前 **v0.7.8**）：
 
 | 平台 | 文件 | 安装 |
 |---|---|---|
@@ -133,7 +133,7 @@
 
 > ⚠️ 安装包**未做代码签名**：macOS 首次打开需右键→打开（或 `xattr -cr "Desk Clock.app"`），Windows 可能弹 SmartScreen，点「仍要运行」即可。
 >
-> 每次 push 代码也会在 [Actions](https://github.com/xiaoqiangclub/desk-clock/actions) 产出全平台构建产物；推 `v*` 标签自动发布 Release。
+> 每次 push 代码也会在 [Actions](https://github.com/XiaoqiangClaw/desk-clock/actions) 产出全平台构建产物；推 `v*` 标签自动发布 Release。
 
 ## 📁 目录
 

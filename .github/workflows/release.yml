@@ -198,7 +198,7 @@ jobs:
 
             Rust 侧由 GitHub Actions 四平台编译验证；前端全套静态回归通过。注销→重新登录的真机自启验证请用设置页的诊断面板确认系统真值。
 
-            完整版本记录见 [CHANGELOG.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/CHANGELOG.md) · 项目介绍见 [README.md](https://github.com/xiaoqiangclub/desk-clock/blob/main/README.md) · 协议 MIT。
+            完整版本记录见 [CHANGELOG.md](https://github.com/XiaoqiangClaw/desk-clock/blob/main/CHANGELOG.md) · 项目介绍见 [README.md](https://github.com/XiaoqiangClaw/desk-clock/blob/main/README.md) · 协议 MIT。
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
